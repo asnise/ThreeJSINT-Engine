@@ -16,7 +16,7 @@ export class UIManager {
         active: true,
         anchor: 'bottom-center',
         offsetX: 0,
-        offsetY: -80,
+        offsetY: 60,
         fontSize: 14,
         bg: 'rgba(0,0,0,0.7)',
         color: '#cccccc'
@@ -25,7 +25,7 @@ export class UIManager {
         active: true,
         anchor: 'bottom-left',
         offsetX: 40,
-        offsetY: -40,
+        offsetY: 40,
         baseSize: 100,
         thumbSize: 40
       }
@@ -57,43 +57,117 @@ export class UIManager {
   createDefaultElement(type = 'label') {
     const id = crypto.randomUUID();
     const count = this.elements.size + 1;
-    if (type === 'label') {
-      return {
-        id,
-        name: `Label_${count}`,
-        type: 'label',
-        visible: true,
-        anchor: 'top-left',
-        offsetX: 20,
-        offsetY: 20,
-        width: 160,
-        height: 36,
-        text: 'Hello World',
-        fontSize: 14,
-        textColor: '#ffffff',
-        bgColor: 'rgba(0, 0, 0, 0.6)',
-        borderRadius: 4,
-        textAlign: 'center',
-        padding: 6
-      };
-    } else {
-      return {
-        id,
-        name: `Image_${count}`,
-        type: 'image',
-        visible: true,
-        anchor: 'top-right',
-        offsetX: 20,
-        offsetY: 20,
-        width: 64,
-        height: 64,
-        textureAssetId: null,
-        imageSrc: '',
-        opacity: 1.0,
-        borderRadius: 4,
-        bgColor: 'transparent',
-        fit: 'contain'
-      };
+    switch (type) {
+      case 'label':
+        return {
+          id,
+          name: `Label_${count}`,
+          type: 'label',
+          visible: true,
+          locked: false,
+          anchor: 'top-left',
+          offsetX: 24,
+          offsetY: 24,
+          width: 160,
+          height: 36,
+          text: 'Hello World',
+          fontSize: 14,
+          fontWeight: '500',
+          textColor: '#ffffff',
+          bgColor: 'rgba(0, 0, 0, 0.6)',
+          borderRadius: 4,
+          borderWidth: 0,
+          borderColor: '#ffffff',
+          textAlign: 'center',
+          padding: 6
+        };
+      case 'button':
+        return {
+          id,
+          name: `Button_${count}`,
+          type: 'button',
+          visible: true,
+          locked: false,
+          anchor: 'bottom-center',
+          offsetX: 0,
+          offsetY: 40,
+          width: 140,
+          height: 42,
+          text: 'Button',
+          fontSize: 14,
+          fontWeight: '600',
+          textColor: '#ffffff',
+          bgColor: '#0284c7',
+          hoverBgColor: '#0369a1',
+          borderRadius: 6,
+          borderWidth: 0,
+          borderColor: '#ffffff',
+          textAlign: 'center',
+          padding: 8
+        };
+      case 'progressbar':
+        return {
+          id,
+          name: `HealthBar_${count}`,
+          type: 'progressbar',
+          visible: true,
+          locked: false,
+          anchor: 'top-left',
+          offsetX: 24,
+          offsetY: 24,
+          width: 200,
+          height: 24,
+          value: 75,
+          maxValue: 100,
+          fillColor: '#ef4444',
+          bgColor: 'rgba(0, 0, 0, 0.7)',
+          showText: true,
+          text: 'HP 75/100',
+          fontSize: 11,
+          textColor: '#ffffff',
+          borderRadius: 4,
+          borderWidth: 1,
+          borderColor: 'rgba(255, 255, 255, 0.3)'
+        };
+      case 'panel':
+        return {
+          id,
+          name: `Panel_${count}`,
+          type: 'panel',
+          visible: true,
+          locked: false,
+          anchor: 'center',
+          offsetX: 0,
+          offsetY: 0,
+          width: 320,
+          height: 220,
+          bgColor: 'rgba(24, 24, 28, 0.85)',
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: 'rgba(255, 255, 255, 0.15)'
+        };
+      case 'image':
+      default:
+        return {
+          id,
+          name: `Image_${count}`,
+          type: 'image',
+          visible: true,
+          locked: false,
+          anchor: 'top-right',
+          offsetX: 24,
+          offsetY: 24,
+          width: 64,
+          height: 64,
+          textureAssetId: null,
+          imageSrc: '',
+          opacity: 1.0,
+          borderRadius: 4,
+          borderWidth: 0,
+          borderColor: '#ffffff',
+          bgColor: 'transparent',
+          fit: 'contain'
+        };
     }
   }
 
@@ -117,6 +191,44 @@ export class UIManager {
 
   getElement(id) {
     return this.elements.get(id) || null;
+  }
+
+  duplicateElement(id) {
+    const el = this.elements.get(id);
+    if (!el) return null;
+    const clone = JSON.parse(JSON.stringify(el));
+    clone.id = crypto.randomUUID();
+    clone.name = (el.name || 'Element') + '_copy';
+    clone.offsetX = (clone.offsetX || 0) + 16;
+    clone.offsetY = (clone.offsetY || 0) + 16;
+    this.elements.set(clone.id, clone);
+    this._refreshDOM();
+    if (this.onUIChanged) this.onUIChanged();
+    return clone;
+  }
+
+  moveElementUp(id) {
+    const arr = Array.from(this.elements.entries());
+    const idx = arr.findIndex(([k]) => k === id);
+    if (idx <= 0) return;
+    const temp = arr[idx - 1];
+    arr[idx - 1] = arr[idx];
+    arr[idx] = temp;
+    this.elements = new Map(arr);
+    this._refreshDOM();
+    if (this.onUIChanged) this.onUIChanged();
+  }
+
+  moveElementDown(id) {
+    const arr = Array.from(this.elements.entries());
+    const idx = arr.findIndex(([k]) => k === id);
+    if (idx < 0 || idx >= arr.length - 1) return;
+    const temp = arr[idx + 1];
+    arr[idx + 1] = arr[idx];
+    arr[idx] = temp;
+    this.elements = new Map(arr);
+    this._refreshDOM();
+    if (this.onUIChanged) this.onUIChanged();
   }
 
   getAllElements() {
@@ -252,13 +364,52 @@ export class UIManager {
         break;
     }
 
+    node.style.border = el.borderWidth ? `${el.borderWidth}px solid ${el.borderColor || '#ffffff'}` : 'none';
+
     if (el.type === 'label') {
       node.textContent = el.text || '';
       node.style.color = el.textColor || '#ffffff';
       node.style.fontSize = `${el.fontSize || 14}px`;
+      node.style.fontWeight = el.fontWeight || '500';
       node.style.padding = `${el.padding || 4}px`;
       node.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-      node.style.fontWeight = '500';
+    } else if (el.type === 'button') {
+      node.textContent = el.text || '';
+      node.style.color = el.textColor || '#ffffff';
+      node.style.fontSize = `${el.fontSize || 14}px`;
+      node.style.fontWeight = el.fontWeight || '600';
+      node.style.padding = `${el.padding || 8}px`;
+      node.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+      node.style.cursor = 'pointer';
+      node.style.pointerEvents = 'auto';
+    } else if (el.type === 'progressbar') {
+      node.innerHTML = '';
+      const val = Math.max(0, Math.min(el.maxValue || 100, el.value || 0));
+      const pct = (val / (el.maxValue || 100)) * 100;
+
+      const fill = document.createElement('div');
+      fill.style.width = `${pct}%`;
+      fill.style.height = '100%';
+      fill.style.background = el.fillColor || '#ef4444';
+      fill.style.borderRadius = `${Math.max(0, (el.borderRadius || 4) - 1)}px`;
+      fill.style.transition = 'width 0.2s ease';
+      node.appendChild(fill);
+
+      if (el.showText) {
+        const textSpan = document.createElement('span');
+        textSpan.style.position = 'absolute';
+        textSpan.style.inset = '0';
+        textSpan.style.display = 'flex';
+        textSpan.style.alignItems = 'center';
+        textSpan.style.justifyContent = 'center';
+        textSpan.style.fontSize = `${el.fontSize || 11}px`;
+        textSpan.style.color = el.textColor || '#ffffff';
+        textSpan.style.fontWeight = 'bold';
+        textSpan.textContent = el.text || `${Math.round(pct)}%`;
+        node.appendChild(textSpan);
+      }
+    } else if (el.type === 'panel') {
+      node.innerHTML = '';
     } else if (el.type === 'image') {
       let src = el.imageSrc || '';
       if (el.textureAssetId && this.assetManager) {

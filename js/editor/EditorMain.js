@@ -120,7 +120,9 @@ export class EditorMain {
   }
 
   _setupEditor() {
-    this.hierarchy = new Hierarchy(this.hierarchyEl, this.sceneManager);
+    this.hierarchy = new Hierarchy(this.hierarchyEl, this.sceneManager, {
+      onFocusObject: (obj) => this.focusObject(obj)
+    }, this.assetManager);
     this.inspector = new Inspector(this.inspectorEl, this.sceneManager, this.assetManager);
 
     this.gizmo = new Gizmo(
@@ -138,7 +140,9 @@ export class EditorMain {
     this.uiPanel = new UIPanel(this.rootEl, this.uiManager, this.assetManager);
     this.nodeGraphEditor = new NodeGraphEditor(this.rootEl, this.nodeRuntime, this.sceneManager, this.uiManager);
     this.inspector.onOpenNodeGraph = (objId) => this.nodeGraphEditor.openForObject(objId);
-    this.projectPanel = new ProjectPanel(this.projectEl, this.assetManager, this.sceneManager);
+    this.projectPanel = new ProjectPanel(this.projectEl, this.assetManager, this.sceneManager, {
+      onRename: () => this.renameProject()
+    });
 
     this.exportSystem = new ExportSystem(this.sceneManager, this.assetManager, this.uiManager, this.nodeRuntime);
 
@@ -153,6 +157,7 @@ export class EditorMain {
       exportZip: () => this.exportSystem.exportZip(this.projectFS.projectName),
       saveProject: () => this.saveProject(),
       saveProjectAs: () => this.saveProjectAs(),
+      renameProject: () => this.renameProject(),
       openProjectFolder: () => this.openProjectFolder(),
       openProjectFile: () => this.openProjectFile(),
       openLauncher: () => this.projectLauncher.show(true),
@@ -166,33 +171,33 @@ export class EditorMain {
           this._applyPlayLayout(val);
         }
       }
-    });
+    }, this.viewportEl);
 
     this.projectLauncher = new ProjectLauncher(this.rootEl, this.projectFS, {
       onProjectCreated: (data) => {
         this._loadProjectData(data);
-        this.toolbar.setProjectName(this.projectFS.projectName);
+        this._setProjectName(this.projectFS.projectName);
         this._showToast(`Project created: ${this.projectFS.projectName}`);
       },
       onProjectLoaded: (data) => {
         this._loadProjectData(data);
-        this.toolbar.setProjectName(this.projectFS.projectName);
+        this._setProjectName(this.projectFS.projectName);
         this._showToast(`Project loaded: ${this.projectFS.projectName}`);
       },
       onLegacyFileLoaded: (data) => {
         this._loadProjectData(data);
-        this.toolbar.setProjectName(data.projectName || 'JSON Project');
+        this._setProjectName(data.projectName || 'JSON Project');
         this._showToast('Project loaded from file');
       },
       onLoadDemo: (name) => {
         this.loadDemo(name);
-        this.toolbar.setProjectName(`Demo: ${name}`);
+        this._setProjectName(`Demo: ${name}`);
       },
       onQuickSandbox: (name, template) => {
         if (template === 'demo') {
           this.loadDemo('treasure-room');
         }
-        this.toolbar.setProjectName('Quick Sandbox');
+        this._setProjectName('Quick Sandbox');
       }
     });
 
@@ -213,7 +218,12 @@ export class EditorMain {
 
   _setupKeyboard() {
     document.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyS') {
+        e.preventDefault();
+        this.saveProjectAs();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === 'KeyS') {
         e.preventDefault();
         this.saveProject();
         return;
@@ -224,8 +234,14 @@ export class EditorMain {
 
       switch (e.code) {
         case 'Delete':
+        case 'Backspace':
           if (this.sceneManager.selectedObject) {
             this.sceneManager.removeObject(this.sceneManager.selectedObject.userData.id);
+          }
+          break;
+        case 'KeyF':
+          if (this.sceneManager.selectedObject) {
+            this.focusObject(this.sceneManager.selectedObject);
           }
           break;
         case 'KeyW':
@@ -239,6 +255,14 @@ export class EditorMain {
           break;
       }
     });
+  }
+
+  focusObject(obj) {
+    if (!obj || !this.orbitControls) return;
+    const box = new THREE.Box3().setFromObject(obj);
+    const center = box.getCenter(new THREE.Vector3());
+    this.orbitControls.target.copy(center);
+    this.orbitControls.update();
   }
 
   _addDefaultScene() {
@@ -417,7 +441,7 @@ export class EditorMain {
       const resp = await fetch(`demo/${name}.json`);
       const data = await resp.json();
       await this._loadProjectData(data);
-      this.toolbar.setProjectName(`Demo: ${name}`);
+      this._setProjectName(`Demo: ${name}`);
       this._showToast(`Demo loaded: ${name}`);
     } catch (err) {
       console.warn('Could not load demo:', err);
@@ -425,6 +449,15 @@ export class EditorMain {
   }
 
   async _loadProjectData(data) {
+    if (data.projectName) {
+      this.projectFS.projectName = data.projectName;
+      this._setProjectName(this.projectFS.projectName);
+    }
+
+    this.sceneManager.selectObject(null);
+    if (this.gizmo) this.gizmo.detach();
+
+    this.assetManager.clear();
     if (data.assets) {
       await this.assetManager.deserializeAssets(data.assets);
     }
@@ -451,137 +484,93 @@ export class EditorMain {
     }
   }
 
-  async saveProject() {
+  async _serializeCurrentProject() {
     const sceneData = this.sceneManager.serialize();
     const assetsData = await this.assetManager.serializeAssets();
     const uiData = this.uiManager.serialize();
     const nodeGraphData = this.nodeRuntime.serialize();
-    const project = {
+    return {
       format: 'ThreeJSINT',
       version: 1,
-      projectName: this.projectFS.projectName,
+      projectName: this.projectFS.projectName || 'MyInteractiveScene',
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       scene: sceneData,
       assets: assetsData,
       uiData: uiData,
       nodeGraphData: nodeGraphData
     };
+  }
 
-    if (this.projectFS.hasActiveProject) {
-      try {
-        await this.projectFS.saveProject(project, this.assetManager);
-        this._showToast(`Saved to ${this.projectFS.projectName}/`);
-        return;
-      } catch (err) {
-        console.warn('Direct folder save failed, fallback to save as:', err);
-      }
+  async saveProject() {
+    try {
+      const project = await this._serializeCurrentProject();
+      await this.projectFS.saveLocalProject(project);
+      this._showToast(`Saved locally: ${this.projectFS.projectName}`);
+    } catch (err) {
+      console.warn('Local save failed:', err);
+      this._showToast(`Failed to save locally: ${err.message}`);
     }
-
-    if (this.projectFS.isSupported) {
-      try {
-        await this.projectFS.promptCreateProject(this.projectFS.projectName, project);
-        this.toolbar.setProjectName(this.projectFS.projectName);
-        this._showToast(`Project folder created & saved!`);
-        return;
-      } catch (err) {
-        if (err.name === 'AbortError') return;
-      }
-    }
-
-    await this._fallbackSaveDownload(project);
   }
 
   async saveProjectAs() {
-    const sceneData = this.sceneManager.serialize();
-    const assetsData = await this.assetManager.serializeAssets();
-    const uiData = this.uiManager.serialize();
-    const nodeGraphData = this.nodeRuntime.serialize();
-    const project = {
-      format: 'ThreeJSINT',
-      version: 1,
-      projectName: this.projectFS.projectName,
-      createdAt: new Date().toISOString(),
-      scene: sceneData,
-      assets: assetsData,
-      uiData: uiData,
-      nodeGraphData: nodeGraphData
-    };
+    const currentName = this.projectFS.projectName || 'MyInteractiveScene';
+    const newName = prompt('Enter project name to export as file:', currentName);
+    if (!newName) return;
+    this.projectFS.projectName = newName.trim();
+    this._setProjectName(this.projectFS.projectName);
 
-    if (this.projectFS.isSupported) {
-      try {
-        await this.projectFS.promptCreateProject(this.projectFS.projectName, project);
-        this.toolbar.setProjectName(this.projectFS.projectName);
-        this._showToast(`Saved as new folder: ${this.projectFS.projectName}/`);
-        return;
-      } catch (err) {
-        if (err.name === 'AbortError') return;
-      }
+    try {
+      const project = await this._serializeCurrentProject();
+      const blob = await this.projectFS.bundleProject(project, this.assetManager);
+      this.projectFS.downloadBundle(blob);
+      await this.projectFS.saveLocalProject(project);
+      this._showToast(`Exported package: ${this.projectFS.packageFileName}`);
+    } catch (err) {
+      console.warn('Direct package save failed, fallback to json:', err);
+      const project = await this._serializeCurrentProject();
+      await this._fallbackSaveDownload(project);
     }
+  }
 
-    await this._fallbackSaveDownload(project);
+  async renameProject() {
+    const currentName = this.projectFS.projectName || 'MyInteractiveScene';
+    const newName = prompt('Enter new project name:', currentName);
+    if (!newName || newName.trim() === currentName) return;
+    this.projectFS.projectName = newName.trim();
+    this._setProjectName(this.projectFS.projectName);
+    await this.saveProject();
+    this._showToast(`Renamed project: ${this.projectFS.projectName}`);
   }
 
   async openProjectFolder() {
-    try {
-      if (!this.projectFS.isSupported) {
-        const dirInput = document.createElement('input');
-        dirInput.type = 'file';
-        dirInput.webkitdirectory = true;
-        dirInput.multiple = true;
-        dirInput.addEventListener('change', async () => {
-          const files = Array.from(dirInput.files);
-          const projectFile = files.find(f => f.name === 'project.json');
-          if (!projectFile) {
-            alert('No project.json found in the selected folder. Please select a valid project folder.');
-            return;
-          }
-          try {
-            const text = await projectFile.text();
-            const data = JSON.parse(text);
-            await this._loadProjectData(data);
-            const name = data.projectName || projectFile.webkitRelativePath.split('/')[0] || 'Project';
-            this.projectFS.projectName = name;
-            this.toolbar.setProjectName(name);
-            this._showToast(`Loaded folder: ${name}`);
-          } catch (err) {
-            alert(`Failed to parse project.json: ${err.message}`);
-          }
-        });
-        dirInput.click();
-        return;
-      }
-      const data = await this.projectFS.promptOpenProject();
-      await this._loadProjectData(data);
-      this.toolbar.setProjectName(this.projectFS.projectName);
-      this._showToast(`Opened folder: ${this.projectFS.projectName}`);
-    } catch (err) {
-      if (err.name !== 'AbortError') {
-        alert(`Failed to open project folder: ${err.message}`);
-      }
-    }
+    await this.openProjectFile();
   }
-
 
   async openProjectFile() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json';
+    input.accept = '.threeint,.zip,.json';
     input.addEventListener('change', async () => {
       const file = input.files[0];
       if (!file) return;
       try {
-        const text = await file.text();
-        const data = JSON.parse(text);
+        const data = await this.projectFS.parseProjectPackage(file);
         await this._loadProjectData(data);
-        const name = data.projectName || file.name.replace(/\.json$/i, '');
+        const name = data.projectName || file.name.replace(/\.(threeint|zip|json)$/i, '');
         this.projectFS.projectName = name;
-        this.toolbar.setProjectName(name);
+        this._setProjectName(name);
         this._showToast(`Loaded ${file.name}`);
       } catch (err) {
-        alert(`Failed to load project file: ${err.message}`);
+        alert(`Failed to load project package: ${err.message}`);
       }
     });
     input.click();
+  }
+
+  _setProjectName(name) {
+    if (this.toolbar) this.toolbar.setProjectName(name);
+    if (this.projectPanel) this.projectPanel.setProjectName(name);
   }
 
   async _fallbackSaveDownload(project) {
@@ -616,6 +605,7 @@ export class EditorMain {
     this.collisionSystem.setDebugVisible(next);
     return next;
   }
+
 
   _setupViewportSelection() {
     let downX = 0, downY = 0;
@@ -737,19 +727,26 @@ export class EditorMain {
       if (hits.length > 0 && data.assetType === 'texture') {
         let topObj = hits[0].object;
         while (topObj && !topObj.userData?.id) topObj = topObj.parent;
-        if (topObj && topObj.userData?.material) {
-          topObj.userData.material.textureId = data.assetId;
-          const tex = this.assetManager.getTexture(data.assetId);
-          if (tex) {
-            topObj.traverse(child => {
-              if (child.isMesh && child.material) {
-                child.material.map = tex;
-                child.material.needsUpdate = true;
-              }
-            });
+        if (topObj) {
+          if (topObj.userData?.type === 'imported_mesh' || topObj.userData?.textures) {
+            this.assetManager.applyBaseTexture(topObj, data.assetId);
+            this.inspector.refresh();
+            return;
           }
-          this.inspector.refresh();
-          return;
+          if (topObj.userData?.material) {
+            topObj.userData.material.textureId = data.assetId;
+            const tex = this.assetManager.getTexture(data.assetId);
+            if (tex) {
+              topObj.traverse(child => {
+                if (child.isMesh && child.material) {
+                  child.material.map = tex;
+                  child.material.needsUpdate = true;
+                }
+              });
+            }
+            this.inspector.refresh();
+            return;
+          }
         }
       }
 

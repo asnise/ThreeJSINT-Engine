@@ -77,7 +77,7 @@ export class NodeGraphEditor {
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'nodegraph-close-btn';
-    closeBtn.textContent = '✕';
+    closeBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
     closeBtn.title = 'Close (ESC)';
     closeBtn.addEventListener('click', () => this.close());
     controls.appendChild(closeBtn);
@@ -224,6 +224,11 @@ export class NodeGraphEditor {
       }
     });
 
+    this.canvasWrap.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      this._showAddNodeMenu(null, e.clientX, e.clientY);
+    });
+
     window.addEventListener('mousemove', (e) => {
       if (this._isPanning) {
         this._pan.x = e.clientX - this._panStart.x;
@@ -248,9 +253,16 @@ export class NodeGraphEditor {
     this._renderWires();
   }
 
-  _showAddNodeMenu(btn) {
+  _showAddNodeMenu(btn, posX, posY) {
     const existing = document.querySelector('.nodegraph-context-menu');
-    if (existing) existing.remove();
+    if (existing) {
+      existing.remove();
+      if (this._activeMenuTarget === (btn || 'canvas')) {
+        this._activeMenuTarget = null;
+        return;
+      }
+    }
+    this._activeMenuTarget = btn || 'canvas';
 
     const menu = document.createElement('div');
     menu.className = 'nodegraph-context-menu';
@@ -263,7 +275,7 @@ export class NodeGraphEditor {
           { type: 'OnTriggerEnter', label: 'OnTriggerEnter (Walk In)' },
           { type: 'OnTriggerExit', label: 'OnTriggerExit (Walk Out)' },
           { type: 'OnVariableChanged', label: 'OnVariableChanged (Var Updated)' },
-          { type: 'OnStart', label: '▶ OnStart (Play Begin)' },
+          { type: 'OnStart', label: 'OnStart (Play Begin)' },
         ]
       },
       {
@@ -291,6 +303,10 @@ export class NodeGraphEditor {
       }
     ];
 
+    const wrapRect = this.canvasWrap.getBoundingClientRect();
+    const spawnX = (posX !== undefined) ? -this._pan.x + (posX - wrapRect.left) : -this._pan.x + 280;
+    const spawnY = (posY !== undefined) ? -this._pan.y + (posY - wrapRect.top) : -this._pan.y + 120;
+
     categories.forEach(group => {
       const header = document.createElement('div');
       header.className = 'context-menu-header';
@@ -301,26 +317,45 @@ export class NodeGraphEditor {
         const row = document.createElement('div');
         row.className = 'context-menu-item';
         row.textContent = item.label;
-        row.addEventListener('click', () => {
-          this._createNode(item.type, -this._pan.x + 300, -this._pan.y + 200);
+        row.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._createNode(item.type, spawnX, spawnY);
           menu.remove();
+          this._activeMenuTarget = null;
         });
         menu.appendChild(row);
       });
     });
 
-    const rect = btn.getBoundingClientRect();
-    menu.style.top = `${rect.bottom + 4}px`;
-    menu.style.left = `${rect.left}px`;
     document.body.appendChild(menu);
+
+    let top = 0;
+    let left = 0;
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      top = rect.bottom + 4;
+      left = rect.left;
+    } else if (posX !== undefined && posY !== undefined) {
+      top = posY;
+      left = posX;
+    }
+
+    const menuW = 240;
+    const menuH = Math.min(menu.scrollHeight || 380, 420);
+    if (left + menuW > window.innerWidth - 10) left = window.innerWidth - menuW - 10;
+    if (top + menuH > window.innerHeight - 10) top = window.innerHeight - menuH - 10;
+
+    menu.style.top = `${Math.max(10, top)}px`;
+    menu.style.left = `${Math.max(10, left)}px`;
 
     const closeMenu = (e) => {
       if (!menu.contains(e.target)) {
         menu.remove();
-        document.removeEventListener('click', closeMenu);
+        this._activeMenuTarget = null;
+        document.removeEventListener('pointerdown', closeMenu);
       }
     };
-    setTimeout(() => document.addEventListener('click', closeMenu), 10);
+    setTimeout(() => document.addEventListener('pointerdown', closeMenu), 10);
   }
 
   _createNode(type, x, y) {

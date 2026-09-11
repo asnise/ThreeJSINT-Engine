@@ -214,18 +214,37 @@ const loadedTextures = {};
 const loadedMeshScenes = {};
 const allObjects = [];
 
+function dataUrlToArrayBuffer(dataUrl) {
+  const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
 async function loadAssets() {
   for (const [id, data] of Object.entries(ASSETS_DATA.textures || {})) {
-    const tex = await new Promise((res, rej) => textureLoader.load(data.data, res, undefined, rej));
-    tex.colorSpace = THREE.SRGBColorSpace;
-    loadedTextures[id] = tex;
+    if (!data || !data.data) continue;
+    try {
+      const tex = await new Promise((res, rej) => textureLoader.load(data.data, res, undefined, rej));
+      tex.colorSpace = THREE.SRGBColorSpace;
+      loadedTextures[id] = tex;
+    } catch (err) {
+      console.warn('Failed to load texture asset in export:', id, err);
+    }
   }
   for (const [id, data] of Object.entries(ASSETS_DATA.meshes || {})) {
-    const blob = await fetch(data.data).then(r => r.blob());
-    const url = URL.createObjectURL(blob);
-    const gltf = await new Promise((res, rej) => gltfLoader.load(url, res, undefined, rej));
-    loadedMeshScenes[id] = gltf.scene;
-    URL.revokeObjectURL(url);
+    if (!data || !data.data) continue;
+    try {
+      const ab = dataUrlToArrayBuffer(data.data);
+      const gltf = await new Promise((res, rej) => gltfLoader.parse(ab, '', res, rej));
+      loadedMeshScenes[id] = gltf.scene;
+    } catch (err) {
+      console.warn('Failed to parse mesh asset in export:', id, err);
+    }
   }
 }
 
@@ -235,20 +254,81 @@ function buildScene() {
 
   const objMap = new Map();
 
-  for (const od of SCENE_DATA.objects) {
-    let obj;
-    if (od.userData.type === 'imported_mesh' && od.userData.meshAssetId && loadedMeshScenes[od.userData.meshAssetId]) {
-      obj = loadedMeshScenes[od.userData.meshAssetId].clone(true);
-    } else if (od.userData.primitiveType) {
-      const color = od.color ? new THREE.Color(od.color) : new THREE.Color(0x888888);
-      switch (od.userData.primitiveType) {
-        case 'cube': obj = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial({ color })); break;
-        case 'sphere': obj = new THREE.Mesh(new THREE.SphereGeometry(0.5,32,24), new THREE.MeshStandardMaterial({ color })); break;
-        case 'plane': obj = new THREE.Mesh(new THREE.PlaneGeometry(10,10), new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide })); obj.rotation.x = -Math.PI/2; break;
-        case 'cylinder': obj = new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,1,32), new THREE.MeshStandardMaterial({ color })); break;
-        default: continue;
+  const rawObjects = Array.isArray(SCENE_DATA.objects) ? SCENE_DATA.objects : [];
+  const seenIds = new Set();
+  const deduplicatedObjects = [];
+  for (const o of rawObjects) {
+    const id = o.userData?.id;
+    if (id) {
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+    }
+    deduplicatedObjects.push(o);
+  }
+
+  const sortedObjects = [...deduplicatedObjects].sort((a, b) => {
+    const aHasParent = a.userData?.parentId ? 1 : 0;
+    const bHasParent = b.userData?.parentId ? 1 : 0;
+    return aHasParent - bHasParent;
+  });
+
+  for (const od of sortedObjects) {
+    let obj = null;
+
+    if (od.userData?.parentId && objMap.has(od.userData.parentId)) {
+      const parent = objMap.get(od.userData.parentId);
+      let found = null;
+      parent.traverse((c) => {
+        if (!found && c !== parent && (c.name === od.userData.name || c.name === od.userData.submeshName || c.userData?.id === od.userData.id)) {
+          found = c;
+        }
+      });
+      if (found) {
+        obj = found;
       }
-    } else { continue; }
+    }
+
+    if (!obj) {
+      if (!od.userData?.parentId && od.userData.type === 'imported_mesh' && od.userData.meshAssetId && loadedMeshScenes[od.userData.meshAssetId]) {
+        obj = loadedMeshScenes[od.userData.meshAssetId].clone(true);
+        const childDatas = sortedObjects.filter((o) => o.userData?.parentId === od.userData.id);
+        const expectedChildren = new Set(
+          childDatas.map((o) => o.userData.submeshName || o.userData.name || o.userData.id)
+        );
+
+        let pieces = obj.children;
+        if (pieces.length === 1 && pieces[0].children && pieces[0].children.length > 1) {
+          pieces = pieces[0].children;
+        }
+
+        if (childDatas.length > 0 && pieces.length > 1) {
+          const toRemove = [];
+          for (const piece of pieces) {
+            const nameMatch = (piece.name && expectedChildren.has(piece.name)) ||
+                              (piece.userData?.name && expectedChildren.has(piece.userData.name)) ||
+                              (piece.userData?.submeshName && expectedChildren.has(piece.userData.submeshName));
+            const idMatch = piece.userData?.id && expectedChildren.has(piece.userData.id);
+            if (!nameMatch && !idMatch) {
+              toRemove.push(piece);
+            }
+          }
+          toRemove.forEach((p) => {
+            if (p.parent) p.parent.remove(p);
+          });
+        }
+      } else if (od.userData.primitiveType) {
+        const color = od.color ? new THREE.Color(od.color) : new THREE.Color(0x888888);
+        switch (od.userData.primitiveType) {
+          case 'cube': obj = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial({ color })); break;
+          case 'sphere': obj = new THREE.Mesh(new THREE.SphereGeometry(0.5,32,24), new THREE.MeshStandardMaterial({ color })); break;
+          case 'plane': obj = new THREE.Mesh(new THREE.PlaneGeometry(10,10), new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide })); obj.rotation.x = -Math.PI/2; break;
+          case 'cylinder': obj = new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,1,32), new THREE.MeshStandardMaterial({ color })); break;
+          default: continue;
+        }
+      } else {
+        continue;
+      }
+    }
 
     obj.userData = od.userData;
     obj.position.set(od.position.x, od.position.y, od.position.z);
@@ -257,8 +337,55 @@ function buildScene() {
     obj.visible = (od.userData.active !== false);
 
     if (od.userData.textures?.base && loadedTextures[od.userData.textures.base]) {
-      const applyTex = (m) => { if (m.isMesh) { m.material.map = loadedTextures[od.userData.textures.base]; m.material.needsUpdate = true; } };
+      const tex = loadedTextures[od.userData.textures.base];
+      const isGltf = od.userData.type === 'imported_mesh';
+      if (isGltf) tex.flipY = false;
+      const applyTex = (m) => {
+        if (m.isMesh && m.material) {
+          if (Array.isArray(m.material)) {
+            m.material.forEach((mat) => {
+              mat.map = tex;
+              if (isGltf && mat.color) mat.color.setHex(0xffffff);
+              mat.needsUpdate = true;
+            });
+          } else {
+            m.material.map = tex;
+            if (isGltf && m.material.color) m.material.color.setHex(0xffffff);
+            m.material.needsUpdate = true;
+          }
+        }
+      };
       if (obj.isMesh) applyTex(obj); else obj.traverse(applyTex);
+    }
+
+    if (od.materials && Array.isArray(od.materials)) {
+      let matIndex = 0;
+      const applySavedMats = (mesh) => {
+        if (!mesh.isMesh || !mesh.material) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        mats.forEach((m) => {
+          const saved = od.materials[matIndex++];
+          if (saved) {
+            if (saved.color && m.color) m.color.set(saved.color);
+            if (saved.roughness !== undefined && m.roughness !== undefined) m.roughness = saved.roughness;
+            if (saved.metalness !== undefined && m.metalness !== undefined) m.metalness = saved.metalness;
+            if (saved.opacity !== undefined) {
+              m.opacity = saved.opacity;
+              m.transparent = saved.transparent ?? (saved.opacity < 1);
+            }
+            if (saved.wireframe !== undefined) m.wireframe = saved.wireframe;
+            if (saved.side === 'double') m.side = THREE.DoubleSide;
+            else if (saved.side === 'back') m.side = THREE.BackSide;
+            else if (saved.side === 'front') m.side = THREE.FrontSide;
+            if (saved.textureId && loadedTextures[saved.textureId]) {
+              m.map = loadedTextures[saved.textureId];
+              if (od.userData?.type === 'imported_mesh') m.map.flipY = false;
+            }
+            m.needsUpdate = true;
+          }
+        });
+      };
+      if (obj.isMesh) applySavedMats(obj); else obj.traverse(applySavedMats);
     }
 
     objMap.set(od.userData.id, obj);
@@ -269,9 +396,13 @@ function buildScene() {
   for (const obj of allObjects) {
     const parentId = obj.userData?.parentId;
     if (parentId && objMap.has(parentId)) {
-      objMap.get(parentId).add(obj);
+      if (obj.parent !== objMap.get(parentId)) {
+        objMap.get(parentId).add(obj);
+      }
     } else {
-      scene.add(obj);
+      if (!obj.parent) {
+        scene.add(obj);
+      }
     }
   }
 

@@ -1,19 +1,14 @@
 export class ProjectFileSystem {
   //#region [Variables/Fields]
-  _currentDirHandle = null;
-  _projectName = 'UntitledProject';
+  _projectName = 'MyInteractiveScene';
   _dbName = 'ThreeJSINT_DB';
-  _dbStore = 'recent_projects';
+  _dbStore = 'recent_projects_v2';
   _db = null;
   //#endregion
 
   //#region [Properties]
   get isSupported() {
-    return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
-  }
-
-  get currentDirHandle() {
-    return this._currentDirHandle;
+    return true;
   }
 
   get projectName() {
@@ -21,11 +16,16 @@ export class ProjectFileSystem {
   }
 
   set projectName(value) {
-    this._projectName = value || 'UntitledProject';
+    this._projectName = value || 'MyInteractiveScene';
   }
 
   get hasActiveProject() {
-    return this._currentDirHandle !== null;
+    return !!this._projectName;
+  }
+
+  get packageFileName() {
+    const safe = (this._projectName || 'project').replace(/[^a-zA-Z0-9_\-]/g, '_');
+    return `${safe}.threeint`;
   }
   //#endregion
 
@@ -36,125 +36,168 @@ export class ProjectFileSystem {
   //#endregion
 
   //#region [Public Methods]
-  async createProjectInDirectory(dirHandle, projectName, initialData = null) {
-    this._currentDirHandle = dirHandle;
-    this._projectName = projectName || dirHandle.name || 'NewProject';
-
-    await this._ensureProjectStructure();
-
+  async createProject(projectName, initialData = null) {
+    this._projectName = projectName || 'MyInteractiveScene';
     const data = initialData || this._createDefaultProjectData(this._projectName);
     data.projectName = this._projectName;
     data.updatedAt = new Date().toISOString();
 
-    await this.writeTextFile('project.json', JSON.stringify(data, null, 2));
-    await this.addRecentProject(this._projectName, dirHandle);
-
+    await this.addRecentProject(this._projectName, data);
     return data;
   }
 
-  async promptCreateProject(projectName, initialData = null) {
-    if (!this.isSupported) {
-      throw new Error('File System Access API is not supported in this browser.');
-    }
-    const dirHandle = await window.showDirectoryPicker({
-      mode: 'readwrite'
-    });
-    return await this.createProjectInDirectory(dirHandle, projectName, initialData);
-  }
-
-  async promptOpenProject() {
-    if (!this.isSupported) {
-      throw new Error('File System Access API is not supported in this browser.');
-    }
-    const dirHandle = await window.showDirectoryPicker({
-      mode: 'readwrite'
-    });
-    return await this.openProjectFromDirectory(dirHandle);
-  }
-
-  async openProjectFromDirectory(dirHandle) {
-    const perm = await this._verifyPermission(dirHandle, true);
-    if (!perm) {
-      throw new Error('Permission to access folder was denied.');
+  async bundleProject(projectData, assetManager = null) {
+    if (typeof JSZip === 'undefined') {
+      throw new Error('JSZip library is not loaded.');
     }
 
-    this._currentDirHandle = dirHandle;
-    this._projectName = dirHandle.name;
-
-    const projectJsonText = await this.readTextFile('project.json');
-    if (!projectJsonText) {
-      throw new Error('No project.json found in the selected folder. Please ensure this is a valid project folder.');
-    }
-
-    const data = JSON.parse(projectJsonText);
-    if (data.projectName) {
-      this._projectName = data.projectName;
-    }
-
-    await this.addRecentProject(this._projectName, dirHandle);
-    return data;
-  }
-
-  async saveProject(projectData, assetManager = null) {
-    if (!this._currentDirHandle) {
-      return await this.promptCreateProject(this._projectName, projectData);
-    }
-
-    const perm = await this._verifyPermission(this._currentDirHandle, true);
-    if (!perm) {
-      throw new Error('Permission to write to project folder was denied.');
-    }
-
-    await this._ensureProjectStructure();
-
+    const zip = new JSZip();
     projectData.projectName = this._projectName;
     projectData.updatedAt = new Date().toISOString();
 
+    zip.file('project.json', JSON.stringify(projectData, null, 2));
+
+    const assetsFolder = zip.folder('assets');
+    const modelsFolder = assetsFolder.folder('models');
+    const texturesFolder = assetsFolder.folder('textures');
+
     if (assetManager) {
-      await this._syncAssetsToDisk(assetManager);
+      if (assetManager._meshes) {
+        for (const [id, m] of assetManager._meshes.entries()) {
+          if (m.arrayBuffer) {
+            const safeName = (m.name || id).replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+            const filename = safeName.endsWith('.glb') ? safeName : safeName + '.glb';
+            modelsFolder.file(filename, m.arrayBuffer);
+          }
+        }
+      }
+
+      if (assetManager._textures) {
+        for (const [id, t] of assetManager._textures.entries()) {
+          if (t.arrayBuffer) {
+            const safeName = (t.name || id).replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+            const filename = safeName.endsWith('.png') ? safeName : safeName + '.png';
+            texturesFolder.file(filename, t.arrayBuffer);
+          }
+        }
+      }
     }
 
-    await this.writeTextFile('project.json', JSON.stringify(projectData, null, 2));
-    await this.addRecentProject(this._projectName, this._currentDirHandle);
+    const blob = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 }
+    });
 
-    return true;
+    await this.addRecentProject(this._projectName, projectData);
+    return blob;
   }
 
-  async writeTextFile(filename, content) {
-    if (!this._currentDirHandle) return false;
-    const fileHandle = await this._currentDirHandle.getFileHandle(filename, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(content);
-    await writable.close();
-    return true;
-  }
-
-  async readTextFile(filename) {
-    if (!this._currentDirHandle) return null;
+  async saveLocalProject(projectData) {
+    if (!projectData) return false;
+    const name = projectData.projectName || this._projectName;
+    this._projectName = name;
+    projectData.projectName = name;
+    projectData.updatedAt = new Date().toISOString();
+    await this.addRecentProject(name, projectData);
     try {
-      const fileHandle = await this._currentDirHandle.getFileHandle(filename);
-      const file = await fileHandle.getFile();
-      return await file.text();
-    } catch {
-      return null;
-    }
+      localStorage.setItem('threejsint_last_project', name);
+      localStorage.setItem('threejsint_last_saved', projectData.updatedAt);
+    } catch {}
+    return true;
   }
 
-  async writeBinaryFile(subPath, arrayBuffer) {
-    if (!this._currentDirHandle) return false;
-    const parts = subPath.split('/').filter(p => p.length > 0);
-    const fileName = parts.pop();
+  downloadBundle(blob, fileName = null) {
+    const targetName = fileName || this.packageFileName;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = targetName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
 
-    let targetDir = this._currentDirHandle;
-    for (const folder of parts) {
-      targetDir = await targetDir.getDirectoryHandle(folder, { create: true });
+  async parseProjectPackage(fileOrBlob) {
+    const isJson = fileOrBlob.name
+      ? fileOrBlob.name.toLowerCase().endsWith('.json')
+      : fileOrBlob.type === 'application/json';
+
+    if (isJson) {
+      const text = await fileOrBlob.text();
+      const data = JSON.parse(text);
+      if (data.projectName) this._projectName = data.projectName;
+      await this.addRecentProject(this._projectName, data);
+      return data;
     }
 
-    const fileHandle = await targetDir.getFileHandle(fileName, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(arrayBuffer);
-    await writable.close();
-    return true;
+    if (typeof JSZip === 'undefined') {
+      throw new Error('JSZip library is required to open .threeint or .zip project packages.');
+    }
+
+    const zip = await JSZip.loadAsync(fileOrBlob);
+    const projectJsonFile = zip.file('project.json');
+    if (!projectJsonFile) {
+      throw new Error('Invalid project package: project.json was not found in the archive.');
+    }
+
+    const projectText = await projectJsonFile.async('text');
+    const projectData = JSON.parse(projectText);
+
+    if (projectData.projectName) {
+      this._projectName = projectData.projectName;
+    }
+
+    projectData.assets = projectData.assets || {};
+    projectData.assets.textures = projectData.assets.textures || {};
+    projectData.assets.meshes = projectData.assets.meshes || {};
+
+    const textureZipFiles = zip.file(/^assets\/textures\/.+/);
+    for (const file of textureZipFiles) {
+      const fileName = file.name.split('/').pop();
+      if (!fileName) continue;
+      const existingEntry = Object.values(projectData.assets.textures).find(t => t.name === fileName);
+      if (!existingEntry || !existingEntry.data) {
+        const ab = await file.async('arraybuffer');
+        const ext = fileName.split('.').pop().toLowerCase();
+        const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png';
+        const base64 = this._arrayBufferToBase64(ab);
+        if (existingEntry) {
+          existingEntry.data = `data:${mime};base64,${base64}`;
+        } else {
+          const id = crypto.randomUUID();
+          projectData.assets.textures[id] = {
+            name: fileName,
+            data: `data:${mime};base64,${base64}`
+          };
+        }
+      }
+    }
+
+    const modelZipFiles = zip.file(/^assets\/models\/.+/);
+    for (const file of modelZipFiles) {
+      const fileName = file.name.split('/').pop();
+      if (!fileName) continue;
+      const baseName = fileName.replace(/\.glb$/i, '');
+      const existingEntry = Object.values(projectData.assets.meshes).find(m => m.name === baseName || m.name === fileName);
+      if (!existingEntry || !existingEntry.data) {
+        const ab = await file.async('arraybuffer');
+        const base64 = this._arrayBufferToBase64(ab);
+        if (existingEntry) {
+          existingEntry.data = `data:model/gltf-binary;base64,${base64}`;
+        } else {
+          const id = crypto.randomUUID();
+          projectData.assets.meshes[id] = {
+            name: baseName,
+            data: `data:model/gltf-binary;base64,${base64}`
+          };
+        }
+      }
+    }
+
+    await this.addRecentProject(this._projectName, projectData);
+    return projectData;
   }
 
   async getRecentProjects() {
@@ -164,33 +207,40 @@ export class ProjectFileSystem {
         resolve([]);
         return;
       }
-      const tx = this._db.transaction(this._dbStore, 'readonly');
-      const store = tx.objectStore(this._dbStore);
-      const req = store.getAll();
-      req.onsuccess = () => {
-        const results = req.result || [];
-        results.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        resolve(results);
-      };
-      req.onerror = () => resolve([]);
+      try {
+        const tx = this._db.transaction(this._dbStore, 'readonly');
+        const store = tx.objectStore(this._dbStore);
+        const req = store.getAll();
+        req.onsuccess = () => {
+          const results = req.result || [];
+          results.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+          resolve(results);
+        };
+        req.onerror = () => resolve([]);
+      } catch {
+        resolve([]);
+      }
     });
   }
 
-  async addRecentProject(name, dirHandle) {
+  async addRecentProject(name, data = null) {
     await this._ensureDB();
     if (!this._db) return;
     return new Promise((resolve) => {
-      const tx = this._db.transaction(this._dbStore, 'readwrite');
-      const store = tx.objectStore(this._dbStore);
-      const entry = {
-        name,
-        handle: dirHandle,
-        pathName: dirHandle.name || name,
-        timestamp: Date.now()
-      };
-      store.put(entry, name);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
+      try {
+        const tx = this._db.transaction(this._dbStore, 'readwrite');
+        const store = tx.objectStore(this._dbStore);
+        const entry = {
+          name,
+          data,
+          timestamp: Date.now()
+        };
+        store.put(entry, name);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
     });
   }
 
@@ -198,11 +248,15 @@ export class ProjectFileSystem {
     await this._ensureDB();
     if (!this._db) return;
     return new Promise((resolve) => {
-      const tx = this._db.transaction(this._dbStore, 'readwrite');
-      const store = tx.objectStore(this._dbStore);
-      store.delete(name);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
+      try {
+        const tx = this._db.transaction(this._dbStore, 'readwrite');
+        const store = tx.objectStore(this._dbStore);
+        store.delete(name);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
     });
   }
   //#endregion
@@ -222,50 +276,18 @@ export class ProjectFileSystem {
     };
   }
 
-  async _ensureProjectStructure() {
-    if (!this._currentDirHandle) return;
-    const assetsHandle = await this._currentDirHandle.getDirectoryHandle('assets', { create: true });
-    await assetsHandle.getDirectoryHandle('models', { create: true });
-    await assetsHandle.getDirectoryHandle('textures', { create: true });
-  }
-
-  async _syncAssetsToDisk(assetManager) {
-    if (!assetManager || !this._currentDirHandle) return;
-
-    for (const [id, m] of assetManager._meshes.entries()) {
-      if (m.arrayBuffer) {
-        const safeName = (m.name || id).replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-        const filename = safeName.endsWith('.glb') ? safeName : safeName + '.glb';
-        await this.writeBinaryFile(`assets/models/${filename}`, m.arrayBuffer);
-      }
+  _arrayBufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
     }
-
-    for (const [id, t] of assetManager._textures.entries()) {
-      if (t.arrayBuffer) {
-        const safeName = (t.name || id).replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-        const filename = safeName.endsWith('.png') ? safeName : safeName + '.png';
-        await this.writeBinaryFile(`assets/textures/${filename}`, t.arrayBuffer);
-      }
-    }
-  }
-
-  async _verifyPermission(fileHandle, readWrite = true) {
-    const options = {};
-    if (readWrite) {
-      options.mode = 'readwrite';
-    }
-    if ((await fileHandle.queryPermission(options)) === 'granted') {
-      return true;
-    }
-    if ((await fileHandle.requestPermission(options)) === 'granted') {
-      return true;
-    }
-    return false;
+    return btoa(binary);
   }
 
   _initDatabase() {
     if (typeof indexedDB === 'undefined') return;
-    const req = indexedDB.open(this._dbName, 1);
+    const req = indexedDB.open(this._dbName, 2);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains(this._dbStore)) {
@@ -280,7 +302,17 @@ export class ProjectFileSystem {
   async _ensureDB() {
     if (this._db) return;
     return new Promise((resolve) => {
-      const req = indexedDB.open(this._dbName, 1);
+      if (typeof indexedDB === 'undefined') {
+        resolve();
+        return;
+      }
+      const req = indexedDB.open(this._dbName, 2);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(this._dbStore)) {
+          db.createObjectStore(this._dbStore);
+        }
+      };
       req.onsuccess = (e) => {
         this._db = e.target.result;
         resolve();

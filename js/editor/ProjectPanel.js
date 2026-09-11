@@ -1,14 +1,20 @@
 export class ProjectPanel {
-  constructor(container, assetManager, sceneManager) {
+  constructor(container, assetManager, sceneManager, options = {}) {
     this.container = container;
     this.assetManager = assetManager;
     this.sceneManager = sceneManager;
+    this.options = options || {};
 
     this.projectName = 'MyProject';
     this._selectedCategory = 'all';
     this._searchQuery = '';
+    this._activeContextMenu = null;
 
     this._build();
+
+    if (this.sceneManager && typeof this.sceneManager.on === 'function') {
+      this.sceneManager.on('projectAssetsChanged', () => this.refresh());
+    }
   }
 
   _build() {
@@ -27,14 +33,15 @@ export class ProjectPanel {
 
     const folderBadge = document.createElement('span');
     folderBadge.className = 'project-folder-badge';
-    folderBadge.textContent = `[ ${this.projectName} ]`;
-    folderBadge.title = 'Click to rename Project Folder';
-    folderBadge.style.cursor = 'pointer';
-    folderBadge.style.color = 'var(--accent-hover)';
-    folderBadge.style.fontSize = '11px';
+    folderBadge.title = 'Project Folder (Click to Rename / Save As)';
+    folderBadge.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      <span class="project-folder-name">${this.projectName}</span>
+    `;
     folderBadge.addEventListener('click', () => this._renameProject());
     leftTitle.appendChild(folderBadge);
     this._folderBadge = folderBadge;
+    this._folderBadgeName = folderBadge.querySelector('.project-folder-name');
 
     this.panelHeader.appendChild(leftTitle);
 
@@ -116,6 +123,11 @@ export class ProjectPanel {
     gridView.style.alignContent = 'flex-start';
 
     this.gridView = gridView;
+    this.gridView.addEventListener('contextmenu', (e) => {
+      if (e.target === this.gridView || e.target.classList.contains('project-empty-msg')) {
+        this._showGridContextMenu(e);
+      }
+    });
     layout.appendChild(gridView);
     this.container.appendChild(layout);
 
@@ -288,7 +300,196 @@ export class ProjectPanel {
         }
       });
 
+      card.addEventListener('contextmenu', (e) => {
+        this._showAssetContextMenu(e, item);
+      });
+
       this.gridView.appendChild(card);
     });
   }
+
+  _showAssetContextMenu(e, item) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    this._closeContextMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.style.display = 'block';
+    menu.style.zIndex = '100005';
+
+    const title = document.createElement('div');
+    title.className = 'context-menu-title';
+    title.textContent = item.name;
+    menu.appendChild(title);
+
+    if (item.type === 'mesh') {
+      const addBtn = this._createMenuItem('Add to Scene', () => {
+        const instance = this.assetManager.createMeshInstance(item.id);
+        if (instance) {
+          instance.position.set(0, 0.5, 0);
+          this.sceneManager.addObject(instance);
+          this.sceneManager.selectObject(instance.userData.id);
+        }
+      });
+      menu.appendChild(addBtn);
+    }
+
+    if (item.type === 'texture') {
+      const selectedObj = this.sceneManager.selectedObject;
+      const applyBtn = this._createMenuItem('Apply as Base Texture', () => {
+        if (selectedObj) {
+          this.assetManager.applyBaseTexture(selectedObj, item.id);
+          this.sceneManager._emit('sceneChanged');
+          this.sceneManager._emit('objectSelected', selectedObj);
+        } else {
+          alert('Please select a GameObject in Hierarchy first.');
+        }
+      });
+      menu.appendChild(applyBtn);
+    }
+
+    const renameBtn = this._createMenuItem('Rename Asset...', () => {
+      const newName = prompt('Enter new asset name:', item.name);
+      if (newName && newName.trim() && newName.trim() !== item.name) {
+        if (item.type === 'mesh') {
+          this.assetManager.renameMesh(item.id, newName.trim());
+        } else {
+          this.assetManager.renameTexture(item.id, newName.trim());
+        }
+        this.refresh();
+        this.sceneManager._emit('projectAssetsChanged');
+      }
+    });
+    menu.appendChild(renameBtn);
+
+    const copyIdBtn = this._createMenuItem('Copy Asset ID', () => {
+      navigator.clipboard.writeText(item.id);
+    });
+    menu.appendChild(copyIdBtn);
+
+    const sep = document.createElement('div');
+    sep.className = 'context-menu-separator';
+    menu.appendChild(sep);
+
+    const delBtn = this._createMenuItem('Delete Asset', () => {
+      if (confirm(`Are you sure you want to delete "${item.name}"?`)) {
+        if (item.type === 'mesh') {
+          const toRemove = [];
+          for (const obj of this.sceneManager._objects.values()) {
+            if (obj.userData?.meshAssetId === item.id) {
+              toRemove.push(obj.userData.id);
+            }
+          }
+          toRemove.forEach((oId) => this.sceneManager.removeObject(oId));
+          this.assetManager.deleteMesh(item.id);
+        } else {
+          this.assetManager.deleteTexture(item.id);
+        }
+        this.refresh();
+        this.sceneManager._emit('projectAssetsChanged');
+      }
+    }, true);
+    menu.appendChild(delBtn);
+
+    document.body.appendChild(menu);
+    this._positionMenu(menu, e.clientX, e.clientY);
+    this._activeContextMenu = menu;
+
+    const closeHandler = (evt) => {
+      if (!menu.contains(evt.target)) {
+        this._closeContextMenu();
+        document.removeEventListener('pointerdown', closeHandler);
+      }
+    };
+    setTimeout(() => document.addEventListener('pointerdown', closeHandler), 10);
+  }
+
+  _showGridContextMenu(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    this._closeContextMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.style.display = 'block';
+    menu.style.zIndex = '100005';
+
+    const title = document.createElement('div');
+    title.className = 'context-menu-title';
+    title.textContent = 'Assets';
+    menu.appendChild(title);
+
+    const importBtn = this._createMenuItem('Import Assets...', () => {
+      this._showImportMenu();
+    });
+    menu.appendChild(importBtn);
+
+    const refreshBtn = this._createMenuItem('Refresh', () => {
+      this.refresh();
+    });
+    menu.appendChild(refreshBtn);
+
+    document.body.appendChild(menu);
+    this._positionMenu(menu, e.clientX, e.clientY);
+    this._activeContextMenu = menu;
+
+    const closeHandler = (evt) => {
+      if (!menu.contains(evt.target)) {
+        this._closeContextMenu();
+        document.removeEventListener('pointerdown', closeHandler);
+      }
+    };
+    setTimeout(() => document.addEventListener('pointerdown', closeHandler), 10);
+  }
+
+  _createMenuItem(label, onClick, isDanger = false) {
+    const btn = document.createElement('button');
+    btn.className = 'context-menu-item';
+    if (isDanger) btn.classList.add('danger');
+    btn.textContent = label;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._closeContextMenu();
+      onClick();
+    });
+    return btn;
+  }
+
+  _positionMenu(menu, x, y) {
+    const w = 180;
+    const h = menu.offsetHeight || 140;
+    let left = x;
+    let top = y;
+    if (left + w > window.innerWidth - 10) left = window.innerWidth - w - 10;
+    if (top + h > window.innerHeight - 10) top = window.innerHeight - h - 10;
+    menu.style.left = `${Math.max(10, left)}px`;
+    menu.style.top = `${Math.max(10, top)}px`;
+  }
+
+  _closeContextMenu() {
+    if (this._activeContextMenu) {
+      this._activeContextMenu.remove();
+      this._activeContextMenu = null;
+    }
+  }
+
+  //#region [Public Methods]
+  setProjectName(name) {
+    this.projectName = name || 'MyProject';
+    if (this._folderBadgeName) {
+      this._folderBadgeName.textContent = this.projectName;
+    }
+  }
+  //#endregion
+
+  //#region [Private Methods]
+  _renameProject() {
+    if (this.options && typeof this.options.onRename === 'function') {
+      this.options.onRename();
+    }
+  }
+  //#endregion
 }

@@ -139,19 +139,35 @@ function buildScene() {
   const objMap = new Map();
 
   for (const od of SCENE_DATA.objects) {
-    let obj;
-    if (od.userData.type === 'imported_mesh' && od.userData.meshAssetId && loadedMeshScenes[od.userData.meshAssetId]) {
-      obj = loadedMeshScenes[od.userData.meshAssetId].clone(true);
-    } else if (od.userData.primitiveType) {
-      const color = od.color ? new THREE.Color(od.color) : new THREE.Color(0x888888);
-      switch (od.userData.primitiveType) {
-        case 'cube': obj = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial({ color })); break;
-        case 'sphere': obj = new THREE.Mesh(new THREE.SphereGeometry(0.5,32,24), new THREE.MeshStandardMaterial({ color })); break;
-        case 'plane': obj = new THREE.Mesh(new THREE.PlaneGeometry(10,10), new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide })); obj.rotation.x = -Math.PI/2; break;
-        case 'cylinder': obj = new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,1,32), new THREE.MeshStandardMaterial({ color })); break;
-        default: continue;
+    let obj = null;
+
+    if (od.userData?.parentId && objMap.has(od.userData.parentId)) {
+      const parent = objMap.get(od.userData.parentId);
+      let found = null;
+      parent.traverse((c) => {
+        if (!found && c !== parent && (c.name === od.userData.name || c.name === od.userData.submeshName || c.userData?.id === od.userData.id)) {
+          found = c;
+        }
+      });
+      if (found) {
+        obj = found;
       }
-    } else { continue; }
+    }
+
+    if (!obj) {
+      if (od.userData.type === 'imported_mesh' && od.userData.meshAssetId && loadedMeshScenes[od.userData.meshAssetId]) {
+        obj = loadedMeshScenes[od.userData.meshAssetId].clone(true);
+      } else if (od.userData.primitiveType) {
+        const color = od.color ? new THREE.Color(od.color) : new THREE.Color(0x888888);
+        switch (od.userData.primitiveType) {
+          case 'cube': obj = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial({ color })); break;
+          case 'sphere': obj = new THREE.Mesh(new THREE.SphereGeometry(0.5,32,24), new THREE.MeshStandardMaterial({ color })); break;
+          case 'plane': obj = new THREE.Mesh(new THREE.PlaneGeometry(10,10), new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide })); obj.rotation.x = -Math.PI/2; break;
+          case 'cylinder': obj = new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,1,32), new THREE.MeshStandardMaterial({ color })); break;
+          default: continue;
+        }
+      } else { continue; }
+    }
 
     obj.userData = od.userData;
     obj.position.set(od.position.x, od.position.y, od.position.z);
@@ -160,8 +176,55 @@ function buildScene() {
     obj.visible = (od.userData.active !== false);
 
     if (od.userData.textures?.base && loadedTextures[od.userData.textures.base]) {
-      const applyTex = (m) => { if (m.isMesh) { m.material.map = loadedTextures[od.userData.textures.base]; m.material.needsUpdate = true; } };
+      const tex = loadedTextures[od.userData.textures.base];
+      const isGltf = od.userData.type === 'imported_mesh';
+      if (isGltf) tex.flipY = false;
+      const applyTex = (m) => {
+        if (m.isMesh && m.material) {
+          if (Array.isArray(m.material)) {
+            m.material.forEach((mat) => {
+              mat.map = tex;
+              if (isGltf && mat.color) mat.color.setHex(0xffffff);
+              mat.needsUpdate = true;
+            });
+          } else {
+            m.material.map = tex;
+            if (isGltf && m.material.color) m.material.color.setHex(0xffffff);
+            m.material.needsUpdate = true;
+          }
+        }
+      };
       if (obj.isMesh) applyTex(obj); else obj.traverse(applyTex);
+    }
+
+    if (od.materials && Array.isArray(od.materials)) {
+      let matIndex = 0;
+      const applySavedMats = (mesh) => {
+        if (!mesh.isMesh || !mesh.material) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        mats.forEach((m) => {
+          const saved = od.materials[matIndex++];
+          if (saved) {
+            if (saved.color && m.color) m.color.set(saved.color);
+            if (saved.roughness !== undefined && m.roughness !== undefined) m.roughness = saved.roughness;
+            if (saved.metalness !== undefined && m.metalness !== undefined) m.metalness = saved.metalness;
+            if (saved.opacity !== undefined) {
+              m.opacity = saved.opacity;
+              m.transparent = saved.transparent ?? (saved.opacity < 1);
+            }
+            if (saved.wireframe !== undefined) m.wireframe = saved.wireframe;
+            if (saved.side === 'double') m.side = THREE.DoubleSide;
+            else if (saved.side === 'back') m.side = THREE.BackSide;
+            else if (saved.side === 'front') m.side = THREE.FrontSide;
+            if (saved.textureId && loadedTextures[saved.textureId]) {
+              m.map = loadedTextures[saved.textureId];
+              if (od.userData?.type === 'imported_mesh') m.map.flipY = false;
+            }
+            m.needsUpdate = true;
+          }
+        });
+      };
+      if (obj.isMesh) applySavedMats(obj); else obj.traverse(applySavedMats);
     }
 
     objMap.set(od.userData.id, obj);
@@ -172,9 +235,13 @@ function buildScene() {
   for (const obj of allObjects) {
     const parentId = obj.userData?.parentId;
     if (parentId && objMap.has(parentId)) {
-      objMap.get(parentId).add(obj);
+      if (obj.parent !== objMap.get(parentId)) {
+        objMap.get(parentId).add(obj);
+      }
     } else {
-      scene.add(obj);
+      if (!obj.parent) {
+        scene.add(obj);
+      }
     }
   }
 

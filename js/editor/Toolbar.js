@@ -1,13 +1,57 @@
 export class Toolbar {
-  constructor(container, callbacks) {
+  //#region [Properties]
+  get isMaximized() {
+    return this._isMaximized;
+  }
+
+  get activeMode() {
+    return this._activeMode;
+  }
+  //#endregion
+
+  //#region [Constructor]
+  constructor(container, callbacks, viewportEl = null) {
     this.container = container;
     this.callbacks = callbacks;
+    this.viewportEl = viewportEl;
     this._activeMode = 'translate';
     this._isPlaying = false;
+    this._isMaximized = false;
 
     this._build();
   }
+  //#endregion
 
+  //#region [Public Methods]
+  setProjectName(name) {
+    if (this._projectNameEl) {
+      const nameSpan = this._projectNameEl.querySelector('.project-badge-name');
+      if (nameSpan) {
+        nameSpan.textContent = name || 'Untitled';
+      } else {
+        this._projectNameEl.textContent = `Project: ${name || 'Untitled'}`;
+      }
+    }
+  }
+
+  setPlayMode(isPlaying) {
+    this._isPlaying = isPlaying;
+    this._playBtn.style.display = isPlaying ? 'none' : '';
+    this._stopBtn.style.display = isPlaying ? '' : 'none';
+    this._playHint.style.display = isPlaying ? '' : 'none';
+    this.leftSection.style.opacity = isPlaying ? '0.4' : '';
+    this.leftSection.style.pointerEvents = isPlaying ? 'none' : '';
+  }
+
+  setMaximize(val) {
+    this._isMaximized = Boolean(val);
+    if (this._maximizeBtn) {
+      this._maximizeBtn.classList.toggle('active', this._isMaximized);
+    }
+  }
+  //#endregion
+
+  //#region [Private Methods]
   _build() {
     this.container.innerHTML = '';
 
@@ -26,11 +70,9 @@ export class Toolbar {
 
     this._addDropdown('File', [
       { label: 'Save Project (Ctrl+S)', action: () => this.callbacks.saveProject() },
-      { label: 'Save Project As...', action: () => this.callbacks.saveProjectAs() },
-      { label: 'Open Project Folder...', action: () => this.callbacks.openProjectFolder() },
-      { label: 'Open Project File (.json)...', action: () => this.callbacks.openProjectFile() },
+      { label: 'Save Project As (.threeint)...', action: () => this.callbacks.saveProjectAs() },
+      { label: 'Open Project (.threeint / .json)...', action: () => this.callbacks.openProjectFile() },
       { label: 'Project Launcher...', action: () => this.callbacks.openLauncher() },
-      { label: 'Demo: Treasure Room', action: () => this.callbacks.loadDemo('treasure-room') },
       { label: 'Export Deployable Package (.zip)', action: () => this.callbacks.exportZip() },
       { label: 'Export Standalone HTML', action: () => this.callbacks.exportHTML() },
     ], false);
@@ -65,33 +107,33 @@ export class Toolbar {
     this._addButton('UI Layout', () => this.callbacks.openUIPanel());
     this._addButton('Node Graph', () => this.callbacks.openNodeGraph());
 
-    // Center Play Bar (Unity-Style)
     this.centerBar = document.createElement('div');
-    this.centerBar.className = 'toolbar-center-play-bar';
+    this.centerBar.className = 'viewport-play-bar';
 
     this._playBtn = document.createElement('button');
-    this._playBtn.className = 'toolbar-btn play-btn';
-    this._playBtn.textContent = '▶ Play';
-    this._playBtn.style.padding = '2px 14px';
-    this._playBtn.style.fontWeight = 'bold';
+    this._playBtn.className = 'viewport-play-btn play-btn';
+    this._playBtn.title = 'Play Scene';
+    this._playBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>Play</span>';
     this._playBtn.addEventListener('click', () => this.callbacks.play());
     this.centerBar.appendChild(this._playBtn);
 
     this._stopBtn = document.createElement('button');
-    this._stopBtn.className = 'toolbar-btn stop-btn';
-    this._stopBtn.textContent = '■ Stop';
-    this._stopBtn.style.padding = '2px 14px';
-    this._stopBtn.style.fontWeight = 'bold';
+    this._stopBtn.className = 'viewport-play-btn stop-btn';
+    this._stopBtn.title = 'Stop Scene';
     this._stopBtn.style.display = 'none';
+    this._stopBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg><span>Stop</span>';
     this._stopBtn.addEventListener('click', () => this.callbacks.stop());
     this.centerBar.appendChild(this._stopBtn);
 
-    this._isMaximized = false;
+    const separator = document.createElement('div');
+    separator.className = 'viewport-play-separator';
+    this.centerBar.appendChild(separator);
+
     this._maximizeBtn = document.createElement('button');
     this._maximizeBtn.type = 'button';
-    this._maximizeBtn.className = 'toolbar-tab-toggle';
-    this._maximizeBtn.innerHTML = '<span class="tab-toggle-icon">⛶</span><span>Maximize</span>';
+    this._maximizeBtn.className = 'viewport-tab-toggle';
     this._maximizeBtn.title = 'Maximize on Play';
+    this._maximizeBtn.innerHTML = '<span class="tab-toggle-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg></span><span>Maximize</span>';
     this._maximizeBtn.addEventListener('click', () => {
       this._isMaximized = !this._isMaximized;
       this._maximizeBtn.classList.toggle('active', this._isMaximized);
@@ -101,10 +143,12 @@ export class Toolbar {
     });
     this.centerBar.appendChild(this._maximizeBtn);
 
+    if (this.viewportEl) {
+      this.viewportEl.appendChild(this.centerBar);
+    } else {
+      this.centerSection.appendChild(this.centerBar);
+    }
 
-    this.centerSection.appendChild(this.centerBar);
-
-    // Right Section
     this._playHint = document.createElement('span');
     this._playHint.style.fontSize = '11px';
     this._playHint.style.color = 'var(--text-muted)';
@@ -113,17 +157,24 @@ export class Toolbar {
     this._playHint.textContent = 'Click to lock cursor · ESC to unlock';
     this.rightSection.appendChild(this._playHint);
 
-    this._projectNameEl = document.createElement('div');
+    this._projectNameEl = document.createElement('button');
+    this._projectNameEl.type = 'button';
     this._projectNameEl.className = 'toolbar-project-badge';
-    this._projectNameEl.textContent = 'Project: Untitled';
-    this._projectNameEl.title = 'Current active project';
+    this._projectNameEl.title = 'Active Project (Click to rename / save as)';
+    this._projectNameEl.innerHTML = `
+      <span class="project-badge-label">Project</span>
+      <span class="project-badge-name">Untitled</span>
+      <svg class="project-badge-edit" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 20h9"/>
+        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+      </svg>
+    `;
+    this._projectNameEl.addEventListener('click', () => {
+      if (this.callbacks.renameProject) {
+        this.callbacks.renameProject();
+      }
+    });
     this.rightSection.appendChild(this._projectNameEl);
-  }
-
-  setProjectName(name) {
-    if (this._projectNameEl) {
-      this._projectNameEl.textContent = `Project: ${name || 'Untitled'}`;
-    }
   }
 
   _addButton(text, onClick, active = false, extraClass = '') {
@@ -189,27 +240,6 @@ export class Toolbar {
     this._scaleBtn.classList.toggle('active', mode === 'scale');
     if (this.callbacks.setGizmoMode) this.callbacks.setGizmoMode(mode);
   }
-
-  setPlayMode(isPlaying) {
-    this._isPlaying = isPlaying;
-    this._playBtn.style.display = isPlaying ? 'none' : '';
-    this._stopBtn.style.display = isPlaying ? '' : 'none';
-    this._playHint.style.display = isPlaying ? '' : 'none';
-    this.leftSection.style.opacity = isPlaying ? '0.4' : '';
-    this.leftSection.style.pointerEvents = isPlaying ? 'none' : '';
-  }
-
-  setMaximize(val) {
-    this._isMaximized = Boolean(val);
-    if (this._maximizeBtn) {
-      this._maximizeBtn.classList.toggle('active', this._isMaximized);
-    }
-  }
-
-  get isMaximized() {
-    return this._isMaximized;
-  }
-
-  get activeMode() { return this._activeMode; }
+  //#endregion
 }
 

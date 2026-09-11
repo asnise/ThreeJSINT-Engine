@@ -9,7 +9,8 @@ export class SceneManager {
       objectAdded: [],
       objectRemoved: [],
       objectSelected: [],
-      sceneChanged: []
+      sceneChanged: [],
+      projectAssetsChanged: []
     };
     this.playerSpawn = { position: new THREE.Vector3(0, 1.7, 5), rotation: new THREE.Euler(0, 0, 0) };
   }
@@ -30,26 +31,82 @@ export class SceneManager {
       this.scene.add(obj);
     }
     obj.visible = this.isActiveInHierarchy(obj.userData.id);
+
+    obj.traverse((child) => {
+      if (child !== obj && child.userData?.id) {
+        if (child.userData.parentId === undefined) {
+          child.userData.parentId = obj.userData.id;
+        }
+        this._objects.set(child.userData.id, child);
+        child.visible = this.isActiveInHierarchy(child.userData.id);
+        this._emit('objectAdded', child);
+      }
+    });
+
     this._emit('objectAdded', obj);
     this._emit('sceneChanged');
   }
 
   removeObject(id) {
-    const obj = this._objects.get(id);
-    if (!obj) return;
-    if (this._selected === obj) this.selectObject(null);
+    const rootTarget = this._objects.get(id);
+    if (!rootTarget) return;
 
-    for (const child of this._objects.values()) {
-      if (child.userData.parentId === id) {
-        this.setParent(child.userData.id, obj.userData.parentId || null);
+    if (this._selected === rootTarget || this._selected?.userData?.id === id) {
+      this.selectObject(null);
+    }
+
+    const idsToDelete = new Set([id]);
+
+    rootTarget.traverse((child) => {
+      if (child.userData?.id) {
+        idsToDelete.add(child.userData.id);
+      }
+    });
+
+    let foundNew = true;
+    while (foundNew) {
+      foundNew = false;
+      for (const [oId, o] of this._objects.entries()) {
+        if (!idsToDelete.has(oId) && o.userData?.parentId && idsToDelete.has(o.userData.parentId)) {
+          idsToDelete.add(oId);
+          foundNew = true;
+        }
       }
     }
 
-    if (obj.parent) obj.parent.remove(obj);
-    else this.scene.remove(obj);
+    for (const curId of idsToDelete) {
+      const curObj = this._objects.get(curId);
+      if (!curObj) continue;
+
+      if (this._selected === curObj) {
+        this.selectObject(null);
+      }
+
+      if (curObj.children) {
+        const overlays = curObj.children.filter((c) => c.userData?._isOverlay);
+        overlays.forEach((o) => curObj.remove(o));
+      }
+
+      if (curObj !== rootTarget) {
+        if (curObj.parent) {
+          curObj.parent.remove(curObj);
+        } else {
+          this.scene.remove(curObj);
+        }
+      }
+
+      this._objects.delete(curId);
+      this._emit('objectRemoved', curObj);
+    }
+
+    if (rootTarget.parent) {
+      rootTarget.parent.remove(rootTarget);
+    } else {
+      this.scene.remove(rootTarget);
+    }
 
     this._objects.delete(id);
-    this._emit('objectRemoved', obj);
+    this._emit('objectRemoved', rootTarget);
     this._emit('sceneChanged');
   }
 
@@ -123,7 +180,7 @@ export class SceneManager {
   }
 
   getAllObjects() {
-    return Array.from(this._objects.values());
+    return Array.from(new Set(this._objects.values()));
   }
 
   getRootObjects() {
@@ -172,7 +229,11 @@ export class SceneManager {
 
   serialize() {
     const objects = [];
+    const seen = new Set();
     for (const obj of this._objects.values()) {
+      if (!obj || !obj.userData?.id) continue;
+      if (seen.has(obj.userData.id)) continue;
+      seen.add(obj.userData.id);
       const data = {
         userData: JSON.parse(JSON.stringify(obj.userData)),
         position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
@@ -180,9 +241,31 @@ export class SceneManager {
         scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z }
       };
 
-      if (obj.isMesh && obj.material) {
-        data.color = '#' + obj.material.color.getHexString();
-        data.opacity = obj.material.opacity;
+      const materials = [];
+      const extractMat = (mesh) => {
+        if (!mesh.isMesh || !mesh.material) return;
+        const mList = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        mList.forEach((m, idx) => {
+          materials.push({
+            meshName: mesh.name,
+            slot: idx,
+            name: m.name || '',
+            color: m.color ? '#' + m.color.getHexString() : '#ffffff',
+            roughness: m.roughness !== undefined ? m.roughness : 0.5,
+            metalness: m.metalness !== undefined ? m.metalness : 0.0,
+            opacity: m.opacity !== undefined ? m.opacity : 1.0,
+            transparent: !!m.transparent,
+            wireframe: !!m.wireframe,
+            side: m.side === THREE.DoubleSide ? 'double' : (m.side === THREE.BackSide ? 'back' : 'front'),
+            textureId: m.userData?.textureId || null
+          });
+        });
+      };
+      if (obj.isMesh) extractMat(obj); else obj.traverse(extractMat);
+      if (materials.length > 0) {
+        data.materials = materials;
+        data.color = materials[0].color;
+        data.opacity = materials[0].opacity;
       }
 
       objects.push(data);
@@ -199,12 +282,28 @@ export class SceneManager {
     };
   }
 
-  deserialize(data, assetManager, primitives) {
+  clear() {
+    this.selectObject(null);
     for (const obj of Array.from(this._objects.values())) {
+      if (obj.parent && obj.parent !== this.scene) {
+        obj.parent.remove(obj);
+      }
       this.scene.remove(obj);
     }
     this._objects.clear();
-    this._selected = null;
+
+    const strays = [];
+    for (const child of this.scene.children) {
+      if (child.userData?.id || (child.isMesh && !child.isLight && !child.isGridHelper)) {
+        strays.push(child);
+      }
+    }
+    strays.forEach((s) => this.scene.remove(s));
+  }
+
+  deserialize(data, assetManager, primitives) {
+    this.clear();
+    const alreadyParented = new Set();
     this.uiData = data.ui || null;
     this.nodeGraphData = data.nodeGraph || null;
 
@@ -216,12 +315,152 @@ export class SceneManager {
       }
     }
 
-    for (const objData of data.objects) {
+    const rawObjects = Array.isArray(data.objects) ? data.objects : [];
+    const seenIds = new Set();
+    const deduplicatedObjects = [];
+    for (const o of rawObjects) {
+      const id = o.userData?.id;
+      if (id) {
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+      }
+      deduplicatedObjects.push(o);
+    }
+
+    const sortedObjects = [...deduplicatedObjects].sort((a, b) => {
+      const aHasParent = a.userData?.parentId ? 1 : 0;
+      const bHasParent = b.userData?.parentId ? 1 : 0;
+      return aHasParent - bHasParent;
+    });
+
+    const applyMaterials = (targetObj, matDataList, isImported = false) => {
+      if (!matDataList || !Array.isArray(matDataList)) return;
+      let matIndex = 0;
+      const applySavedMats = (mesh) => {
+        if (!mesh.isMesh || !mesh.material) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        mats.forEach((m) => {
+          const saved = matDataList[matIndex++];
+          if (saved) {
+            if (saved.color && m.color) m.color.set(saved.color);
+            if (saved.roughness !== undefined && m.roughness !== undefined) m.roughness = saved.roughness;
+            if (saved.metalness !== undefined && m.metalness !== undefined) m.metalness = saved.metalness;
+            if (saved.opacity !== undefined) {
+              m.opacity = saved.opacity;
+              m.transparent = saved.transparent ?? (saved.opacity < 1);
+            }
+            if (saved.wireframe !== undefined) m.wireframe = saved.wireframe;
+            if (saved.side === 'double') m.side = THREE.DoubleSide;
+            else if (saved.side === 'back') m.side = THREE.BackSide;
+            else if (saved.side === 'front') m.side = THREE.FrontSide;
+            if (saved.textureId && assetManager) {
+              const texAsset = assetManager.getTexture(saved.textureId);
+              if (texAsset && texAsset.texture) {
+                m.map = texAsset.texture;
+                if (isImported) m.map.flipY = false;
+              }
+            }
+            m.needsUpdate = true;
+          }
+        });
+      };
+      if (targetObj.isMesh) applySavedMats(targetObj); else targetObj.traverse(applySavedMats);
+    };
+
+    const applyTextures = (targetObj, texData) => {
+      if (!assetManager || !texData) return;
+      if (texData.base) {
+        assetManager.applyBaseTexture(targetObj, texData.base);
+      }
+      if (texData.overrides) {
+        for (const ov of texData.overrides) {
+          assetManager.addOverrideTexture(targetObj, ov.id, ov.opacity, ov.blendMode);
+        }
+      }
+    };
+
+    for (const objData of sortedObjects) {
+      if (this._objects.has(objData.userData?.id)) {
+        continue;
+      }
+
       let obj;
 
-      if (objData.userData.type === 'imported_mesh' && objData.userData.meshAssetId && assetManager) {
+      if (objData.userData?.parentId && this._objects.has(objData.userData.parentId)) {
+        const parent = this._objects.get(objData.userData.parentId);
+        let found = null;
+        parent.traverse((c) => {
+          if (!found && c !== parent && (c.userData?.id === objData.userData.id || c.name === objData.userData.name || c.name === objData.userData.submeshName)) {
+            found = c;
+          }
+        });
+        if (found) {
+          obj = found;
+          obj.userData = { ...obj.userData, ...objData.userData };
+          obj.position.set(objData.position.x, objData.position.y, objData.position.z);
+          obj.rotation.set(
+            THREE.MathUtils.degToRad(objData.rotation.x),
+            THREE.MathUtils.degToRad(objData.rotation.y),
+            THREE.MathUtils.degToRad(objData.rotation.z)
+          );
+          obj.scale.set(objData.scale.x, objData.scale.y, objData.scale.z);
+          this._objects.set(obj.userData.id, obj);
+          alreadyParented.add(obj.userData.id);
+
+          applyMaterials(obj, objData.materials, objData.userData?.type === 'imported_mesh');
+          applyTextures(obj, objData.userData?.textures);
+          continue;
+        }
+      }
+
+      if (!objData.userData?.parentId && objData.userData.type === 'imported_mesh' && objData.userData.meshAssetId && assetManager) {
         obj = assetManager.createMeshInstance(objData.userData.meshAssetId);
         if (!obj) continue;
+
+        const childDatas = sortedObjects.filter((o) => o.userData?.parentId === objData.userData.id);
+        const expectedChildren = new Set(
+          childDatas.map((o) => o.userData.submeshName || o.userData.name || o.userData.id)
+        );
+
+        let pieces = obj.children;
+        if (pieces.length === 1 && pieces[0].children && pieces[0].children.length > 1) {
+          pieces = pieces[0].children;
+        }
+
+        if (childDatas.length > 0 && pieces.length > 1) {
+          const toRemove = [];
+          for (const piece of pieces) {
+            const matchedChild = childDatas.find(
+              (cd) =>
+                (cd.userData.submeshName && (cd.userData.submeshName === piece.name || cd.userData.submeshName === piece.userData?.name)) ||
+                (cd.userData.name && (cd.userData.name === piece.name || cd.userData.name === piece.userData?.name)) ||
+                (cd.userData.id && cd.userData.id === piece.userData?.id)
+            );
+
+            if (matchedChild) {
+              piece.userData = { ...piece.userData, ...matchedChild.userData };
+              piece.position.set(matchedChild.position.x, matchedChild.position.y, matchedChild.position.z);
+              piece.rotation.set(
+                THREE.MathUtils.degToRad(matchedChild.rotation.x),
+                THREE.MathUtils.degToRad(matchedChild.rotation.y),
+                THREE.MathUtils.degToRad(matchedChild.rotation.z)
+              );
+              piece.scale.set(matchedChild.scale.x, matchedChild.scale.y, matchedChild.scale.z);
+              applyMaterials(piece, matchedChild.materials, true);
+              applyTextures(piece, matchedChild.userData?.textures);
+              alreadyParented.add(piece.userData.id);
+            } else {
+              const nameMatch = piece.name && expectedChildren.has(piece.name);
+              const idMatch = piece.userData?.id && expectedChildren.has(piece.userData.id);
+              if (!nameMatch && !idMatch) {
+                toRemove.push(piece);
+              }
+            }
+          }
+          toRemove.forEach((p) => {
+            if (p.parent) p.parent.remove(p);
+          });
+        }
       } else if (objData.userData.primitiveType && primitives) {
         const color = objData.color ? new THREE.Color(objData.color) : 0x888888;
         obj = primitives.createFromType(objData.userData.primitiveType, color);
@@ -238,48 +477,32 @@ export class SceneManager {
       );
       obj.scale.set(objData.scale.x, objData.scale.y, objData.scale.z);
 
-      if (objData.color && obj.isMesh && obj.material) {
-        obj.material.color.set(objData.color);
-      }
-      if (objData.opacity !== undefined && obj.isMesh && obj.material) {
-        obj.material.opacity = objData.opacity;
-        obj.material.transparent = objData.opacity < 1;
+      if (objData.materials && Array.isArray(objData.materials)) {
+        applyMaterials(obj, objData.materials, objData.userData?.type === 'imported_mesh');
+      } else {
+        if (objData.color && obj.isMesh && obj.material) {
+          obj.material.color.set(objData.color);
+        }
+        if (objData.opacity !== undefined && obj.isMesh && obj.material) {
+          obj.material.opacity = objData.opacity;
+          obj.material.transparent = objData.opacity < 1;
+        }
       }
 
       this.addObject(obj);
-
-      if (assetManager && objData.userData.textures) {
-        if (objData.userData.textures.base) {
-          assetManager.applyBaseTexture(obj, objData.userData.textures.base);
-        }
-        if (objData.userData.textures.overrides) {
-          for (const ov of objData.userData.textures.overrides) {
-            assetManager.addOverrideTexture(obj, ov.id, ov.opacity, ov.blendMode);
-          }
-        }
-      }
+      applyTextures(obj, objData.userData?.textures);
     }
 
-    // Reconstruct parent-child hierarchy
-    for (const objData of data.objects) {
-      if (objData.userData?.parentId) {
+    for (const objData of deduplicatedObjects) {
+      if (objData.userData?.parentId && !alreadyParented.has(objData.userData.id)) {
         this.setParent(objData.userData.id, objData.userData.parentId);
       }
     }
 
-    for (const obj of this._objects.values()) {
+    for (const obj of this.getAllObjects()) {
       obj.visible = this.isActiveInHierarchy(obj.userData.id);
     }
 
-    this._emit('sceneChanged');
-  }
-
-  clear() {
-    for (const obj of Array.from(this._objects.values())) {
-      this.scene.remove(obj);
-    }
-    this._objects.clear();
-    this._selected = null;
     this._emit('sceneChanged');
   }
 }

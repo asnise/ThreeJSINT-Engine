@@ -48,29 +48,77 @@ export class AssetManager {
     });
   }
 
+  cloneUniqueMaterials(object) {
+    object.traverse((child) => {
+      if (child.isMesh && child.material) {
+        if (Array.isArray(child.material)) {
+          child.material = child.material.map((mat) => {
+            const m = mat.clone();
+            m.name = mat.name;
+            return m;
+          });
+        } else {
+          const m = child.material.clone();
+          m.name = child.material.name;
+          child.material = m;
+        }
+      }
+    });
+  }
+
+  setupSeparatedObjects(rootObj, meshAssetId) {
+    this.cloneUniqueMaterials(rootObj);
+
+    let pieces = rootObj.children;
+    if (pieces.length === 1 && pieces[0].children && pieces[0].children.length > 1) {
+      pieces = pieces[0].children;
+    }
+
+    if (pieces.length > 1) {
+      pieces.forEach((piece, idx) => {
+        if (!piece.userData?.id) {
+          piece.userData = piece.userData || {};
+          piece.userData.id = crypto.randomUUID();
+          piece.userData.name = piece.name || `${rootObj.name}_Part_${idx + 1}`;
+          piece.userData.type = 'imported_mesh';
+          piece.userData.primitiveType = null;
+          piece.userData.collider = piece.userData.collider || { enabled: false, isTrigger: false };
+          piece.userData.interaction = piece.userData.interaction || { enabled: false, type: 'inspect', promptText: 'Press E to interact' };
+          piece.userData.textures = piece.userData.textures || { base: null, overrides: [] };
+          piece.userData.meshAssetId = meshAssetId;
+          piece.userData.submeshName = piece.name;
+          piece.userData.parentId = rootObj.userData.id;
+          piece.userData.active = true;
+
+          this.cloneUniqueMaterials(piece);
+        }
+      });
+    }
+  }
+
   createMeshInstance(meshAssetId) {
     const asset = this._meshes.get(meshAssetId);
     if (!asset) return null;
 
     const clone = asset.scene.clone(true);
+    this.cloneUniqueMaterials(clone);
 
-    clone.traverse((child) => {
-      if (child.isMesh && child.material) {
-        child.material = child.material.clone();
-      }
-    });
-
+    const rootId = crypto.randomUUID();
     clone.name = asset.name;
     clone.userData = {
-      id: crypto.randomUUID(),
+      id: rootId,
       name: asset.name,
       type: 'imported_mesh',
       primitiveType: null,
       collider: { enabled: false, isTrigger: false },
       interaction: { enabled: false, type: 'inspect', promptText: 'Press E to interact' },
       textures: { base: null, overrides: [] },
-      meshAssetId
+      meshAssetId,
+      parentId: null,
+      active: true
     };
+
+    this.setupSeparatedObjects(clone, meshAssetId);
 
     return clone;
   }
@@ -115,14 +163,57 @@ export class AssetManager {
   getAllTextures() { return Array.from(this._textures.values()); }
   getAllMeshes() { return Array.from(this._meshes.values()); }
 
+  deleteTexture(id) {
+    const asset = this._textures.get(id);
+    if (!asset) return false;
+    if (asset.texture) asset.texture.dispose();
+    if (asset.blobUrl) URL.revokeObjectURL(asset.blobUrl);
+    return this._textures.delete(id);
+  }
+
+  deleteMesh(id) {
+    const asset = this._meshes.get(id);
+    if (!asset) return false;
+    if (asset.blobUrl) URL.revokeObjectURL(asset.blobUrl);
+    return this._meshes.delete(id);
+  }
+
+  renameTexture(id, newName) {
+    const asset = this._textures.get(id);
+    if (!asset || !newName) return false;
+    asset.name = newName.trim();
+    return true;
+  }
+
+  renameMesh(id, newName) {
+    const asset = this._meshes.get(id);
+    if (!asset || !newName) return false;
+    asset.name = newName.trim();
+    return true;
+  }
+
   applyBaseTexture(object, textureId) {
     const asset = this._textures.get(textureId);
     if (!asset) return;
 
+    const isGltf = object.userData?.type === 'imported_mesh';
+    if (isGltf && asset.texture) {
+      asset.texture.flipY = false;
+    }
+
     const applyToMesh = (mesh) => {
       if (!mesh.isMesh) return;
-      mesh.material.map = asset.texture;
-      mesh.material.needsUpdate = true;
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach((m) => {
+          m.map = asset.texture;
+          if (isGltf && m.color) m.color.setHex(0xffffff);
+          m.needsUpdate = true;
+        });
+      } else if (mesh.material) {
+        mesh.material.map = asset.texture;
+        if (isGltf && mesh.material.color) mesh.material.color.setHex(0xffffff);
+        mesh.material.needsUpdate = true;
+      }
     };
 
     if (object.isMesh) {
@@ -139,8 +230,15 @@ export class AssetManager {
   clearBaseTexture(object) {
     const clearMesh = (mesh) => {
       if (!mesh.isMesh) return;
-      mesh.material.map = null;
-      mesh.material.needsUpdate = true;
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach((m) => {
+          m.map = null;
+          m.needsUpdate = true;
+        });
+      } else if (mesh.material) {
+        mesh.material.map = null;
+        mesh.material.needsUpdate = true;
+      }
     };
 
     if (object.isMesh) {
@@ -245,15 +343,29 @@ export class AssetManager {
     return { textures, meshes };
   }
 
+  clear() {
+    for (const asset of this._textures.values()) {
+      if (asset.texture) asset.texture.dispose();
+      if (asset.blobUrl) URL.revokeObjectURL(asset.blobUrl);
+    }
+    this._textures.clear();
+
+    for (const asset of this._meshes.values()) {
+      if (asset.blobUrl) URL.revokeObjectURL(asset.blobUrl);
+    }
+    this._meshes.clear();
+  }
+
   async deserializeAssets(assetsData) {
     if (!assetsData) return;
 
     if (assetsData.textures) {
       for (const [id, texData] of Object.entries(assetsData.textures)) {
+        if (!texData || !texData.data) continue;
         if (this._textures.has(id)) continue;
         try {
           const ab = this._dataUrlToArrayBuffer(texData.data);
-          const blob = new Blob([ab], { type: this._getMimeType(texData.name) });
+          const blob = new Blob([ab], { type: this._getMimeType(texData.name || 'texture.png') });
           const url = URL.createObjectURL(blob);
           const texture = await new Promise((resolve, reject) => {
             this._textureLoader.load(url, resolve, undefined, reject);
@@ -270,7 +382,7 @@ export class AssetManager {
 
           this._textures.set(id, {
             id,
-            name: texData.name,
+            name: texData.name || 'Texture',
             type: 'texture',
             texture,
             preview,
@@ -285,6 +397,7 @@ export class AssetManager {
 
     if (assetsData.meshes) {
       for (const [id, meshData] of Object.entries(assetsData.meshes)) {
+        if (!meshData || !meshData.data) continue;
         if (this._meshes.has(id)) continue;
         try {
           const ab = this._dataUrlToArrayBuffer(meshData.data);
@@ -317,11 +430,6 @@ export class AssetManager {
         }
       }
     }
-  }
-
-  clear() {
-    this._textures.clear();
-    this._meshes.clear();
   }
 
   _dataUrlToArrayBuffer(dataUrl) {

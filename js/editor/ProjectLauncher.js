@@ -5,7 +5,6 @@ export class ProjectLauncher {
   _callbacks = null;
   _modalEl = null;
   _activeTab = 'projects';
-  _selectedDirHandle = null;
   _selectedTemplate = 'blank';
   //#endregion
 
@@ -47,7 +46,6 @@ export class ProjectLauncher {
     const windowEl = document.createElement('div');
     windowEl.className = 'launcher-window';
 
-    // Header
     const headerEl = document.createElement('div');
     headerEl.className = 'launcher-header';
 
@@ -68,17 +66,16 @@ export class ProjectLauncher {
 
     this._closeBtn = document.createElement('button');
     this._closeBtn.className = 'launcher-close-btn';
-    this._closeBtn.textContent = '✕';
+    this._closeBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    this._closeBtn.title = 'Close';
     this._closeBtn.addEventListener('click', () => this.hide());
     headerEl.appendChild(this._closeBtn);
 
     windowEl.appendChild(headerEl);
 
-    // Body: Sidebar + Main Area
     const bodyEl = document.createElement('div');
     bodyEl.className = 'launcher-body';
 
-    // Sidebar
     const sidebarEl = document.createElement('div');
     sidebarEl.className = 'launcher-sidebar';
 
@@ -101,7 +98,6 @@ export class ProjectLauncher {
 
     bodyEl.appendChild(sidebarEl);
 
-    // Main Content
     this._contentEl = document.createElement('div');
     this._contentEl.className = 'launcher-content';
     bodyEl.appendChild(this._contentEl);
@@ -135,6 +131,7 @@ export class ProjectLauncher {
   }
 
   async _renderProjectsTab() {
+    this._contentEl.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'launcher-tab-panel';
 
@@ -142,7 +139,7 @@ export class ProjectLauncher {
     header.className = 'launcher-panel-header';
     header.innerHTML = `
       <h3>Recent Projects</h3>
-      <span class="launcher-panel-desc">Stored locally on your disk</span>
+      <span class="launcher-panel-desc">Cached in browser storage for instant access</span>
     `;
     wrap.appendChild(header);
 
@@ -173,7 +170,7 @@ export class ProjectLauncher {
 
         const path = document.createElement('div');
         path.className = 'launcher-project-path';
-        path.textContent = `Folder: ${r.pathName || r.name}`;
+        path.textContent = `Package: ${(r.name || 'project').replace(/[^a-zA-Z0-9_\-]/g, '_')}.threeint`;
 
         const date = document.createElement('div');
         date.className = 'launcher-project-date';
@@ -191,10 +188,9 @@ export class ProjectLauncher {
         openBtn.textContent = 'Open';
         openBtn.addEventListener('click', async () => {
           try {
-            if (r.handle) {
-              const data = await this._projectFS.openProjectFromDirectory(r.handle);
+            if (r.data) {
               this.hide();
-              if (this._callbacks.onProjectLoaded) this._callbacks.onProjectLoaded(data);
+              if (this._callbacks.onProjectLoaded) this._callbacks.onProjectLoaded(r.data);
             } else {
               this._switchTab('open');
             }
@@ -205,12 +201,12 @@ export class ProjectLauncher {
 
         const delBtn = document.createElement('button');
         delBtn.className = 'launcher-action-btn del-btn';
-        delBtn.textContent = '✕';
+        delBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
         delBtn.title = 'Remove from list';
         delBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           await this._projectFS.removeRecentProject(r.name);
-          this._renderProjectsTab();
+          await this._renderProjectsTab();
         });
 
         actions.appendChild(openBtn);
@@ -227,6 +223,7 @@ export class ProjectLauncher {
   }
 
   _renderNewTab() {
+    this._contentEl.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'launcher-tab-panel';
 
@@ -234,14 +231,13 @@ export class ProjectLauncher {
     header.className = 'launcher-panel-header';
     header.innerHTML = `
       <h3>Create New Project</h3>
-      <span class="launcher-panel-desc">Creates project.json and assets subfolder directly on your disk</span>
+      <span class="launcher-panel-desc">Start building your 3D interactive scene</span>
     `;
     wrap.appendChild(header);
 
     const form = document.createElement('div');
     form.className = 'launcher-form';
 
-    // Project Name
     const nameGroup = document.createElement('div');
     nameGroup.className = 'launcher-form-group';
     nameGroup.innerHTML = `<label>Project Name</label>`;
@@ -252,55 +248,6 @@ export class ProjectLauncher {
     nameGroup.appendChild(nameInput);
     form.appendChild(nameGroup);
 
-    // Folder Picker
-    const folderGroup = document.createElement('div');
-    folderGroup.className = 'launcher-form-group';
-    folderGroup.innerHTML = `<label>Project Folder on Disk</label>`;
-
-    const folderRow = document.createElement('div');
-    folderRow.className = 'launcher-folder-row';
-
-    const folderDisplay = document.createElement('div');
-    folderDisplay.className = 'launcher-folder-display';
-    folderDisplay.textContent = this._selectedDirHandle
-      ? this._selectedDirHandle.name
-      : (this._projectFS.isSupported ? 'No folder selected' : 'Sandbox Mode (Browser Memory)');
-    if (!this._projectFS.isSupported && !this._selectedDirHandle) {
-      folderDisplay.style.color = '#38bdf8';
-    }
-
-    const browseBtn = document.createElement('button');
-    browseBtn.className = 'launcher-secondary-btn';
-    browseBtn.textContent = 'Choose Folder...';
-    browseBtn.addEventListener('click', async () => {
-      try {
-        if (!this._projectFS.isSupported) {
-          alert('Direct disk folder sync requires Chrome, Edge, or Brave on HTTPS/localhost. In this browser, your project will run in Sandbox Mode (save as .json or export .zip).');
-          return;
-        }
-        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        this._selectedDirHandle = handle;
-        folderDisplay.textContent = handle.name;
-        folderDisplay.style.color = '';
-        if (nameInput.value === 'MyInteractiveScene' && handle.name) {
-          nameInput.value = handle.name;
-        }
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          console.warn('Folder selection aborted or failed', err);
-        }
-      }
-    });
-
-
-
-
-    folderRow.appendChild(folderDisplay);
-    folderRow.appendChild(browseBtn);
-    folderGroup.appendChild(folderRow);
-    form.appendChild(folderGroup);
-
-    // Template Selector
     const templateGroup = document.createElement('div');
     templateGroup.className = 'launcher-form-group';
     templateGroup.innerHTML = `<label>Template</label>`;
@@ -331,23 +278,12 @@ export class ProjectLauncher {
     templateGroup.appendChild(tplRow);
     form.appendChild(templateGroup);
 
-    // Submit Button
     const submitBtn = document.createElement('button');
     submitBtn.className = 'launcher-primary-btn create-btn';
     submitBtn.textContent = 'Create Project';
     submitBtn.addEventListener('click', async () => {
       const pName = nameInput.value.trim() || 'MyInteractiveScene';
       try {
-        if (!this._selectedDirHandle) {
-          if (!this._projectFS.isSupported) {
-            this.hide();
-            if (this._callbacks.onQuickSandbox) this._callbacks.onQuickSandbox(pName, this._selectedTemplate);
-            return;
-          }
-          const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-          this._selectedDirHandle = handle;
-        }
-
         let initialData = null;
         if (this._selectedTemplate === 'demo') {
           try {
@@ -358,15 +294,13 @@ export class ProjectLauncher {
           }
         }
 
-        const projectData = await this._projectFS.createProjectInDirectory(this._selectedDirHandle, pName, initialData);
+        const projectData = await this._projectFS.createProject(pName, initialData);
         this.hide();
         if (this._callbacks.onProjectCreated) {
-          this._callbacks.onProjectCreated(projectData, this._selectedDirHandle);
+          this._callbacks.onProjectCreated(projectData);
         }
       } catch (err) {
-        if (err.name !== 'AbortError') {
-          alert(`Failed to create project: ${err.message}`);
-        }
+        alert(`Failed to create project: ${err.message}`);
       }
     });
 
@@ -376,6 +310,7 @@ export class ProjectLauncher {
   }
 
   _renderOpenTab() {
+    this._contentEl.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'launcher-tab-panel';
 
@@ -383,92 +318,45 @@ export class ProjectLauncher {
     header.className = 'launcher-panel-header';
     header.innerHTML = `
       <h3>Open Existing Project</h3>
-      <span class="launcher-panel-desc">Load project from local folder or JSON backup</span>
+      <span class="launcher-panel-desc">Load a project package (.threeint / .zip) or JSON scene</span>
     `;
     wrap.appendChild(header);
 
     const optionsWrap = document.createElement('div');
     optionsWrap.className = 'launcher-open-options';
 
-    // Option 1: Folder
-    const folderCard = document.createElement('div');
-    folderCard.className = 'launcher-open-card';
-    folderCard.innerHTML = `
-      <h4>Open Project Folder (Recommended)</h4>
-      <p>Select a local project directory containing project.json and assets folder.</p>
-      <button class="launcher-primary-btn" id="open-folder-btn">Select Folder...</button>
+    const packageCard = document.createElement('div');
+    packageCard.className = 'launcher-open-card';
+    packageCard.innerHTML = `
+      <h4>Open Project Package (.threeint / .zip / .json)</h4>
+      <p>Select a packaged <b>.threeint</b> bundle, exported <b>.zip</b>, or <b>.json</b> file with all assets bundled inside.</p>
+      <button class="launcher-primary-btn" id="open-pkg-btn">Select File...</button>
     `;
-    folderCard.querySelector('#open-folder-btn').addEventListener('click', async () => {
-      try {
-        if (!this._projectFS.isSupported) {
-          const dirInput = document.createElement('input');
-          dirInput.type = 'file';
-          dirInput.webkitdirectory = true;
-          dirInput.multiple = true;
-          dirInput.addEventListener('change', async () => {
-            const files = Array.from(dirInput.files);
-            const projectFile = files.find(f => f.name === 'project.json');
-            if (!projectFile) {
-              alert('No project.json found in the selected folder. Please select a valid project folder.');
-              return;
-            }
-            try {
-              const text = await projectFile.text();
-              const data = JSON.parse(text);
-              this.hide();
-              if (this._callbacks.onProjectLoaded) this._callbacks.onProjectLoaded(data);
-            } catch (err) {
-              alert(`Failed to parse project.json: ${err.message}`);
-            }
-          });
-          dirInput.click();
-          return;
-        }
-        const data = await this._projectFS.promptOpenProject();
-        this.hide();
-        if (this._callbacks.onProjectLoaded) this._callbacks.onProjectLoaded(data);
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          alert(`Failed to open project folder: ${err.message}`);
-        }
-      }
-    });
-
-    optionsWrap.appendChild(folderCard);
-
-    // Option 2: Single JSON file
-    const fileCard = document.createElement('div');
-    fileCard.className = 'launcher-open-card';
-    fileCard.innerHTML = `
-      <h4>Open Project File (.json)</h4>
-      <p>Load from an exported or standalone project.json file.</p>
-      <button class="launcher-secondary-btn" id="open-file-btn">Choose File...</button>
-    `;
-    fileCard.querySelector('#open-file-btn').addEventListener('click', () => {
+    packageCard.querySelector('#open-pkg-btn').addEventListener('click', () => {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.json';
+      input.accept = '.threeint,.zip,.json';
       input.addEventListener('change', async () => {
         const file = input.files[0];
         if (!file) return;
         try {
-          const text = await file.text();
-          const data = JSON.parse(text);
+          const data = await this._projectFS.parseProjectPackage(file);
           this.hide();
-          if (this._callbacks.onLegacyFileLoaded) this._callbacks.onLegacyFileLoaded(data);
+          if (this._callbacks.onProjectLoaded) this._callbacks.onProjectLoaded(data);
         } catch (err) {
-          alert(`Invalid project JSON file: ${err.message}`);
+          alert(`Failed to open project package: ${err.message}`);
         }
       });
       input.click();
     });
-    optionsWrap.appendChild(fileCard);
 
+    optionsWrap.appendChild(packageCard);
     wrap.appendChild(optionsWrap);
     this._contentEl.appendChild(wrap);
   }
 
   _renderDemosTab() {
+    this._contentEl.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'launcher-tab-panel';
 
