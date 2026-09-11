@@ -1,0 +1,323 @@
+{
+  "playerSpawn": {
+    "position": { "x": 0, "y": 1.7, "z": 3.5 },
+    "rotation": { "x": 0, "y": 0, "z": 0 }
+  },
+  "objects": [
+    {
+      "userData": {
+        "id": "floor-001",
+        "name": "Stone Floor",
+        "type": "primitive",
+        "primitiveType": "plane",
+        "collider": { "enabled": true, "isTrigger": false },
+        "interaction": { "enabled": false, "type": "inspect", "promptText": "" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": 0, "y": 0, "z": 0 },
+      "rotation": { "x": -90, "y": 0, "z": 0 },
+      "scale": { "x": 1, "y": 1, "z": 1 },
+      "color": "#4a3728"
+    },
+    {
+      "userData": {
+        "id": "wall-north",
+        "name": "Wall North",
+        "type": "primitive",
+        "primitiveType": "cube",
+        "collider": { "enabled": true, "isTrigger": false },
+        "interaction": { "enabled": false, "type": "inspect", "promptText": "" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": 0, "y": 2.5, "z": -5 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 10, "y": 5, "z": 0.2 },
+      "color": "#5c4a3a"
+    },
+    {
+      "userData": {
+        "id": "wall-south",
+        "name": "Wall South",
+        "type": "primitive",
+        "primitiveType": "cube",
+        "collider": { "enabled": true, "isTrigger": false },
+        "interaction": { "enabled": false, "type": "inspect", "promptText": "" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": 0, "y": 2.5, "z": 5 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 10, "y": 5, "z": 0.2 },
+      "color": "#5c4a3a"
+    },
+    {
+      "userData": {
+        "id": "wall-east",
+        "name": "Wall East",
+        "type": "primitive",
+        "primitiveType": "cube",
+        "collider": { "enabled": true, "isTrigger": false },
+        "interaction": { "enabled": false, "type": "inspect", "promptText": "" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": 5, "y": 2.5, "z": 0 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 0.2, "y": 5, "z": 10 },
+      "color": "#5c4a3a"
+    },
+    {
+      "userData": {
+        "id": "wall-west",
+        "name": "Wall West",
+        "type": "primitive",
+        "primitiveType": "cube",
+        "collider": { "enabled": true, "isTrigger": false },
+        "interaction": { "enabled": false, "type": "inspect", "promptText": "" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": -5, "y": 2.5, "z": 0 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 0.2, "y": 5, "z": 10 },
+      "color": "#5c4a3a"
+    },
+    {
+      "userData": {
+        "id": "ceiling",
+        "name": "Ceiling",
+        "type": "primitive",
+        "primitiveType": "cube",
+        "collider": { "enabled": false, "isTrigger": false },
+        "interaction": { "enabled": false, "type": "inspect", "promptText": "" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": 0, "y": 5, "z": 0 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 10, "y": 0.1, "z": 10 },
+      "color": "#3d3028"
+    },
+    {
+      "userData": {
+        "id": "pedestal-1",
+        "name": "Pedestal Left",
+        "type": "primitive",
+        "primitiveType": "cylinder",
+        "collider": { "enabled": true, "isTrigger": false },
+        "interaction": { "enabled": false, "type": "inspect", "promptText": "" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": -2.5, "y": 0.5, "z": -3 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 0.7, "y": 1, "z": 0.7 },
+      "color": "#666666"
+    },
+    {
+      "userData": {
+        "id": "pedestal-2",
+        "name": "Pedestal Center",
+        "type": "primitive",
+        "primitiveType": "cylinder",
+        "collider": { "enabled": true, "isTrigger": false },
+        "interaction": { "enabled": false, "type": "inspect", "promptText": "" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": 0, "y": 0.5, "z": -3.5 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 0.7, "y": 1, "z": 0.7 },
+      "color": "#666666"
+    },
+    {
+      "userData": {
+        "id": "pedestal-3",
+        "name": "Pedestal Right",
+        "type": "primitive",
+        "primitiveType": "cylinder",
+        "collider": { "enabled": true, "isTrigger": false },
+        "interaction": { "enabled": false, "type": "inspect", "promptText": "" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": 2.5, "y": 0.5, "z": -3 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 0.7, "y": 1, "z": 0.7 },
+      "color": "#666666"
+    },
+    {
+      "userData": {
+        "id": "gold-cube",
+        "name": "Golden Cube",
+        "type": "primitive",
+        "primitiveType": "cube",
+        "collider": { "enabled": true, "isTrigger": true },
+        "interaction": { "enabled": true, "type": "inspect", "promptText": "Press E to inspect Golden Cube" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": -2.5, "y": 1.3, "z": -3 },
+      "rotation": { "x": 0, "y": 45, "z": 0 },
+      "scale": { "x": 0.5, "y": 0.5, "z": 0.5 },
+      "color": "#ffd700"
+    },
+    {
+      "userData": {
+        "id": "blue-gem",
+        "name": "Blue Crystal",
+        "type": "primitive",
+        "primitiveType": "sphere",
+        "collider": { "enabled": true, "isTrigger": true },
+        "interaction": { "enabled": true, "type": "inspect", "promptText": "Press E to inspect Blue Crystal" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": 0, "y": 1.3, "z": -3.5 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 0.5, "y": 0.7, "z": 0.5 },
+      "color": "#4488ff"
+    },
+    {
+      "userData": {
+        "id": "ruby-sphere",
+        "name": "Ruby Orb",
+        "type": "primitive",
+        "primitiveType": "sphere",
+        "collider": { "enabled": true, "isTrigger": true },
+        "interaction": { "enabled": true, "type": "inspect", "promptText": "Press E to inspect Ruby Orb" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": 2.5, "y": 1.3, "z": -3 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "scale": { "x": 0.4, "y": 0.4, "z": 0.4 },
+      "color": "#cc2244"
+    },
+    {
+      "userData": {
+        "id": "chest",
+        "name": "Treasure Chest",
+        "type": "primitive",
+        "primitiveType": "cube",
+        "collider": { "enabled": true, "isTrigger": true },
+        "interaction": { "enabled": true, "type": "inspect", "promptText": "Press E to open Treasure Chest" },
+        "textures": { "base": null, "overrides": [] },
+        "meshAssetId": null
+      },
+      "position": { "x": 0, "y": 0.4, "z": -1 },
+      "rotation": { "x": 0, "y": 15, "z": 0 },
+      "scale": { "x": 1.2, "y": 0.8, "z": 0.7 },
+      "color": "#8B4513"
+    }
+  ],
+  "uiData": {
+    "baseUI": {
+      "crosshair": true,
+      "interactPrompt": true
+    },
+    "elements": [
+      {
+        "id": "vault-title",
+        "type": "label",
+        "text": "ANCIENT TREASURE VAULT",
+        "anchor": "top-center",
+        "offsetX": 0,
+        "offsetY": 24,
+        "fontSize": 18,
+        "color": "#ffd700",
+        "fontFamily": "system-ui, sans-serif",
+        "fontWeight": "bold",
+        "opacity": 0.9,
+        "visible": true
+      },
+      {
+        "id": "quest-tracker",
+        "type": "label",
+        "text": "Quest: Inspect the Ancient Relics",
+        "anchor": "top-left",
+        "offsetX": 24,
+        "offsetY": 24,
+        "fontSize": 14,
+        "color": "#e0e0e0",
+        "fontFamily": "system-ui, sans-serif",
+        "fontWeight": "normal",
+        "opacity": 0.85,
+        "visible": true
+      }
+    ]
+  },
+  "nodeGraphData": {
+    "variables": {
+      "chestOpened": false
+    },
+    "nodes": [
+      {
+        "id": "node-interact-chest",
+        "type": "OnInteract",
+        "category": "event",
+        "title": "On Interact",
+        "x": 80,
+        "y": 120,
+        "inputs": [],
+        "outputs": [{ "id": "flow", "label": "▶ Out", "type": "flow" }],
+        "data": { "targetId": "chest" }
+      },
+      {
+        "id": "node-flipflop",
+        "type": "FlipFlop",
+        "category": "condition",
+        "title": "Flip-Flop",
+        "x": 340,
+        "y": 120,
+        "inputs": [{ "id": "flow", "label": "▶ In", "type": "flow" }],
+        "outputs": [
+          { "id": "A", "label": "A ▶", "type": "flow" },
+          { "id": "B", "label": "B ▶", "type": "flow" }
+        ],
+        "data": {}
+      },
+      {
+        "id": "node-rotate-open",
+        "type": "RotateObject",
+        "category": "action",
+        "title": "Open Chest",
+        "x": 580,
+        "y": 60,
+        "inputs": [{ "id": "flow", "label": "▶ In", "type": "flow" }],
+        "outputs": [{ "id": "flow", "label": "▶ Out", "type": "flow" }],
+        "data": { "targetId": "chest", "axis": "y", "angle": 45, "duration": 0.5 }
+      },
+      {
+        "id": "node-rotate-close",
+        "type": "RotateObject",
+        "category": "action",
+        "title": "Close Chest",
+        "x": 580,
+        "y": 240,
+        "inputs": [{ "id": "flow", "label": "▶ In", "type": "flow" }],
+        "outputs": [{ "id": "flow", "label": "▶ Out", "type": "flow" }],
+        "data": { "targetId": "chest", "axis": "y", "angle": -45, "duration": 0.5 }
+      },
+      {
+        "id": "node-set-ui-open",
+        "type": "SetUIText",
+        "category": "action",
+        "title": "Update Quest",
+        "x": 860,
+        "y": 60,
+        "inputs": [{ "id": "flow", "label": "▶ In", "type": "flow" }],
+        "outputs": [{ "id": "flow", "label": "▶ Out", "type": "flow" }],
+        "data": { "uiId": "quest-tracker", "text": "Quest Complete: Treasure Chest Opened!" }
+      }
+    ],
+    "connections": [
+      { "id": "c1", "fromNode": "node-interact-chest", "fromPort": "flow", "toNode": "node-flipflop", "toPort": "flow" },
+      { "id": "c2", "fromNode": "node-flipflop", "fromPort": "A", "toNode": "node-rotate-open", "toPort": "flow" },
+      { "id": "c3", "fromNode": "node-rotate-open", "fromPort": "flow", "toNode": "node-set-ui-open", "toPort": "flow" },
+      { "id": "c4", "fromNode": "node-flipflop", "fromPort": "B", "toNode": "node-rotate-close", "toPort": "flow" }
+    ]
+  }
+}

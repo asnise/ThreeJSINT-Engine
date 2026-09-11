@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>ThreeInteractEngine — Editor</title>
+  <meta name="description" content="Browser-based 3D interactive scene editor powered by Three.js. Place objects, set collisions, configure interactions, and export standalone HTML.">
+  <link rel="stylesheet" href="css/editor.css">
+</head>
+<body>
+  <div id="editor-root"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
