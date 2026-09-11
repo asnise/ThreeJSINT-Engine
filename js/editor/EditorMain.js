@@ -21,12 +21,15 @@ import { UIPanel } from './UIPanel.js';
 import { NodeGraphRuntime } from '../engine/NodeGraph/NodeGraphRuntime.js';
 import { NodeGraphEditor } from './NodeGraphEditor.js';
 import { ProjectPanel } from './ProjectPanel.js';
+import { ProjectFileSystem } from '../engine/ProjectFileSystem.js';
+import { ProjectLauncher } from './ProjectLauncher.js';
 
 export class EditorMain {
   constructor(rootEl) {
     this.rootEl = rootEl;
     this.mode = 'edit';
     this.maximizeOnPlay = false;
+    this.projectFS = new ProjectFileSystem();
 
     this._setupDOM();
     this._setupEngine();
@@ -71,7 +74,7 @@ export class EditorMain {
     this.assetManager = new AssetManager();
     this.sceneManager = new SceneManager(this.renderer.scene);
     this.collisionSystem = new CollisionSystem(this.sceneManager);
-    this.itemInspector = new ItemInspector();
+    this.itemInspector = new ItemInspector(this.viewportEl);
 
     this.fpsController = new FPSController(
       this.renderer.camera,
@@ -86,7 +89,8 @@ export class EditorMain {
       this.sceneManager,
       this.fpsController,
       this.mobileControls,
-      this.itemInspector
+      this.itemInspector,
+      this.viewportEl
     );
 
     this.orbitControls = new OrbitControls(this.renderer.camera, this.renderer.domElement);
@@ -97,7 +101,8 @@ export class EditorMain {
     this.uiManager = new UIManager();
     this.uiManager.mount(this.viewportEl);
 
-    this.nodeRuntime = new NodeGraphRuntime(this.sceneManager, this.uiManager);
+    this.nodeRuntime = new NodeGraphRuntime(this.sceneManager, this.uiManager, this.itemInspector);
+
 
     this.interactionSystem.onObjectInteracted = (target) => {
       this.nodeRuntime.triggerEvent('OnInteract', target);
@@ -145,8 +150,12 @@ export class EditorMain {
       play: () => this.play(),
       stop: () => this.stop(),
       exportHTML: () => this.exportSystem.exportHTML(),
+      exportZip: () => this.exportSystem.exportZip(this.projectFS.projectName),
       saveProject: () => this.saveProject(),
-      openProject: () => this.openProject(),
+      saveProjectAs: () => this.saveProjectAs(),
+      openProjectFolder: () => this.openProjectFolder(),
+      openProjectFile: () => this.openProjectFile(),
+      openLauncher: () => this.projectLauncher.show(true),
       loadDemo: (name) => this.loadDemo(name),
       toggleColliders: () => this.toggleColliders(),
       openUIPanel: () => this.uiPanel.toggle(),
@@ -158,6 +167,38 @@ export class EditorMain {
         }
       }
     });
+
+    this.projectLauncher = new ProjectLauncher(this.rootEl, this.projectFS, {
+      onProjectCreated: (data) => {
+        this._loadProjectData(data);
+        this.toolbar.setProjectName(this.projectFS.projectName);
+        this._showToast(`Project created: ${this.projectFS.projectName}`);
+      },
+      onProjectLoaded: (data) => {
+        this._loadProjectData(data);
+        this.toolbar.setProjectName(this.projectFS.projectName);
+        this._showToast(`Project loaded: ${this.projectFS.projectName}`);
+      },
+      onLegacyFileLoaded: (data) => {
+        this._loadProjectData(data);
+        this.toolbar.setProjectName(data.projectName || 'JSON Project');
+        this._showToast('Project loaded from file');
+      },
+      onLoadDemo: (name) => {
+        this.loadDemo(name);
+        this.toolbar.setProjectName(`Demo: ${name}`);
+      },
+      onQuickSandbox: (name, template) => {
+        if (template === 'demo') {
+          this.loadDemo('treasure-room');
+        }
+        this.toolbar.setProjectName('Quick Sandbox');
+      }
+    });
+
+    setTimeout(() => {
+      this.projectLauncher.show(true);
+    }, 120);
 
     this.sceneManager.on('sceneChanged', () => {
       if (this.collisionSystem.isDebugVisible) {
@@ -172,6 +213,12 @@ export class EditorMain {
 
   _setupKeyboard() {
     document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+        e.preventDefault();
+        this.saveProject();
+        return;
+      }
+
       if (this.mode !== 'edit') return;
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
 
@@ -369,25 +416,38 @@ export class EditorMain {
     try {
       const resp = await fetch(`demo/${name}.json`);
       const data = await resp.json();
-      this.sceneManager.deserialize(data, this.assetManager, Primitives);
-      if (data.uiData) {
-        this.uiManager.deserialize(data.uiData);
-      } else {
-        this.uiManager.clearCustom();
-      }
-      if (data.nodeGraphData) {
-        this.nodeRuntime.deserialize(data.nodeGraphData);
-      } else {
-        this.nodeRuntime.deserialize({ nodes: [], connections: [], variables: {} });
-      }
-      this.hierarchy.refresh();
-      this.inspector.refresh();
-      this.projectPanel.refresh();
-      if (this.collisionSystem.isDebugVisible) {
-        this.collisionSystem.updateDebugVisuals();
-      }
+      await this._loadProjectData(data);
+      this.toolbar.setProjectName(`Demo: ${name}`);
+      this._showToast(`Demo loaded: ${name}`);
     } catch (err) {
       console.warn('Could not load demo:', err);
+    }
+  }
+
+  async _loadProjectData(data) {
+    if (data.assets) {
+      await this.assetManager.deserializeAssets(data.assets);
+    }
+    const sceneData = data.scene || data;
+    this.sceneManager.deserialize(sceneData, this.assetManager, Primitives);
+
+    if (data.uiData || sceneData.uiData) {
+      this.uiManager.deserialize(data.uiData || sceneData.uiData);
+    } else {
+      this.uiManager.clearCustom();
+    }
+
+    if (data.nodeGraphData || sceneData.nodeGraphData) {
+      this.nodeRuntime.deserialize(data.nodeGraphData || sceneData.nodeGraphData);
+    } else {
+      this.nodeRuntime.deserialize({ nodes: [], connections: [], variables: {} });
+    }
+
+    this.hierarchy.refresh();
+    this.inspector.refresh();
+    this.projectPanel.refresh();
+    if (this.collisionSystem.isDebugVisible) {
+      this.collisionSystem.updateDebugVisuals();
     }
   }
 
@@ -397,8 +457,9 @@ export class EditorMain {
     const uiData = this.uiManager.serialize();
     const nodeGraphData = this.nodeRuntime.serialize();
     const project = {
-      format: 'ThreeInteractEngine',
+      format: 'ThreeJSINT',
       version: 1,
+      projectName: this.projectFS.projectName,
       createdAt: new Date().toISOString(),
       scene: sceneData,
       assets: assetsData,
@@ -406,17 +467,102 @@ export class EditorMain {
       nodeGraphData: nodeGraphData
     };
 
-    const json = JSON.stringify(project, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'project.json';
-    a.click();
-    URL.revokeObjectURL(url);
+    if (this.projectFS.hasActiveProject) {
+      try {
+        await this.projectFS.saveProject(project, this.assetManager);
+        this._showToast(`Saved to ${this.projectFS.projectName}/`);
+        return;
+      } catch (err) {
+        console.warn('Direct folder save failed, fallback to save as:', err);
+      }
+    }
+
+    if (this.projectFS.isSupported) {
+      try {
+        await this.projectFS.promptCreateProject(this.projectFS.projectName, project);
+        this.toolbar.setProjectName(this.projectFS.projectName);
+        this._showToast(`Project folder created & saved!`);
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    await this._fallbackSaveDownload(project);
   }
 
-  async openProject() {
+  async saveProjectAs() {
+    const sceneData = this.sceneManager.serialize();
+    const assetsData = await this.assetManager.serializeAssets();
+    const uiData = this.uiManager.serialize();
+    const nodeGraphData = this.nodeRuntime.serialize();
+    const project = {
+      format: 'ThreeJSINT',
+      version: 1,
+      projectName: this.projectFS.projectName,
+      createdAt: new Date().toISOString(),
+      scene: sceneData,
+      assets: assetsData,
+      uiData: uiData,
+      nodeGraphData: nodeGraphData
+    };
+
+    if (this.projectFS.isSupported) {
+      try {
+        await this.projectFS.promptCreateProject(this.projectFS.projectName, project);
+        this.toolbar.setProjectName(this.projectFS.projectName);
+        this._showToast(`Saved as new folder: ${this.projectFS.projectName}/`);
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    await this._fallbackSaveDownload(project);
+  }
+
+  async openProjectFolder() {
+    try {
+      if (!this.projectFS.isSupported) {
+        const dirInput = document.createElement('input');
+        dirInput.type = 'file';
+        dirInput.webkitdirectory = true;
+        dirInput.multiple = true;
+        dirInput.addEventListener('change', async () => {
+          const files = Array.from(dirInput.files);
+          const projectFile = files.find(f => f.name === 'project.json');
+          if (!projectFile) {
+            alert('No project.json found in the selected folder. Please select a valid project folder.');
+            return;
+          }
+          try {
+            const text = await projectFile.text();
+            const data = JSON.parse(text);
+            await this._loadProjectData(data);
+            const name = data.projectName || projectFile.webkitRelativePath.split('/')[0] || 'Project';
+            this.projectFS.projectName = name;
+            this.toolbar.setProjectName(name);
+            this._showToast(`Loaded folder: ${name}`);
+          } catch (err) {
+            alert(`Failed to parse project.json: ${err.message}`);
+          }
+        });
+        dirInput.click();
+        return;
+      }
+      const data = await this.projectFS.promptOpenProject();
+      await this._loadProjectData(data);
+      this.toolbar.setProjectName(this.projectFS.projectName);
+      this._showToast(`Opened folder: ${this.projectFS.projectName}`);
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        alert(`Failed to open project folder: ${err.message}`);
+      }
+    }
+  }
+
+
+  async openProjectFile() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
@@ -426,37 +572,43 @@ export class EditorMain {
       try {
         const text = await file.text();
         const data = JSON.parse(text);
-
-        if (data.assets) {
-          await this.assetManager.deserializeAssets(data.assets);
-        }
-        const sceneData = data.scene || data;
-        this.sceneManager.deserialize(sceneData, this.assetManager, Primitives);
-
-        if (data.uiData || sceneData.uiData) {
-          this.uiManager.deserialize(data.uiData || sceneData.uiData);
-        } else {
-          this.uiManager.clearCustom();
-        }
-
-        if (data.nodeGraphData || sceneData.nodeGraphData) {
-          this.nodeRuntime.deserialize(data.nodeGraphData || sceneData.nodeGraphData);
-        } else {
-          this.nodeRuntime.deserialize({ nodes: [], connections: [], variables: {} });
-        }
-
-        this.hierarchy.refresh();
-        this.inspector.refresh();
-        this.projectPanel.refresh();
-        if (this.collisionSystem.isDebugVisible) {
-          this.collisionSystem.updateDebugVisuals();
-        }
+        await this._loadProjectData(data);
+        const name = data.projectName || file.name.replace(/\.json$/i, '');
+        this.projectFS.projectName = name;
+        this.toolbar.setProjectName(name);
+        this._showToast(`Loaded ${file.name}`);
       } catch (err) {
-        console.error('Failed to open project:', err);
-        alert('Failed to load project file: ' + err.message);
+        alert(`Failed to load project file: ${err.message}`);
       }
     });
     input.click();
+  }
+
+  async _fallbackSaveDownload(project) {
+    const json = JSON.stringify(project, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(this.projectFS.projectName || 'project').replace(/[^a-zA-Z0-9_\-]/g, '_')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    this._showToast('Saved as JSON download');
+  }
+
+  _showToast(message) {
+    const existing = document.querySelector('.editor-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'editor-toast';
+    toast.textContent = message;
+    this.rootEl.appendChild(toast);
+
+    setTimeout(() => {
+      toast.classList.add('fade-out');
+      setTimeout(() => toast.remove(), 300);
+    }, 2400);
   }
 
   toggleColliders() {

@@ -25,9 +25,13 @@ export class Toolbar {
     this.container.appendChild(this.rightSection);
 
     this._addDropdown('File', [
-      { label: 'Save Project', action: () => this.callbacks.saveProject() },
-      { label: 'Open Project', action: () => this.callbacks.openProject() },
+      { label: 'Save Project (Ctrl+S)', action: () => this.callbacks.saveProject() },
+      { label: 'Save Project As...', action: () => this.callbacks.saveProjectAs() },
+      { label: 'Open Project Folder...', action: () => this.callbacks.openProjectFolder() },
+      { label: 'Open Project File (.json)...', action: () => this.callbacks.openProjectFile() },
+      { label: 'Project Launcher...', action: () => this.callbacks.openLauncher() },
       { label: 'Demo: Treasure Room', action: () => this.callbacks.loadDemo('treasure-room') },
+      { label: 'Export Deployable Package (.zip)', action: () => this.callbacks.exportZip() },
       { label: 'Export Standalone HTML', action: () => this.callbacks.exportHTML() },
     ], false);
 
@@ -82,19 +86,21 @@ export class Toolbar {
     this._stopBtn.addEventListener('click', () => this.callbacks.stop());
     this.centerBar.appendChild(this._stopBtn);
 
-    const maxLbl = document.createElement('label');
-    maxLbl.className = 'toolbar-maximize-label';
-    const maxChk = document.createElement('input');
-    maxChk.type = 'checkbox';
-    maxChk.style.cursor = 'pointer';
-    maxChk.addEventListener('change', () => {
+    this._isMaximized = false;
+    this._maximizeBtn = document.createElement('button');
+    this._maximizeBtn.type = 'button';
+    this._maximizeBtn.className = 'toolbar-tab-toggle';
+    this._maximizeBtn.innerHTML = '<span class="tab-toggle-icon">⛶</span><span>Maximize</span>';
+    this._maximizeBtn.title = 'Maximize on Play';
+    this._maximizeBtn.addEventListener('click', () => {
+      this._isMaximized = !this._isMaximized;
+      this._maximizeBtn.classList.toggle('active', this._isMaximized);
       if (this.callbacks.toggleMaximize) {
-        this.callbacks.toggleMaximize(maxChk.checked);
+        this.callbacks.toggleMaximize(this._isMaximized);
       }
     });
-    maxLbl.appendChild(maxChk);
-    maxLbl.appendChild(document.createTextNode('Maximize'));
-    this.centerBar.appendChild(maxLbl);
+    this.centerBar.appendChild(this._maximizeBtn);
+
 
     this.centerSection.appendChild(this.centerBar);
 
@@ -106,6 +112,18 @@ export class Toolbar {
     this._playHint.style.display = 'none';
     this._playHint.textContent = 'Click to lock cursor · ESC to unlock';
     this.rightSection.appendChild(this._playHint);
+
+    this._projectNameEl = document.createElement('div');
+    this._projectNameEl.className = 'toolbar-project-badge';
+    this._projectNameEl.textContent = 'Project: Untitled';
+    this._projectNameEl.title = 'Current active project';
+    this.rightSection.appendChild(this._projectNameEl);
+  }
+
+  setProjectName(name) {
+    if (this._projectNameEl) {
+      this._projectNameEl.textContent = `Project: ${name || 'Untitled'}`;
+    }
   }
 
   _addButton(text, onClick, active = false, extraClass = '') {
@@ -181,5 +199,17 @@ export class Toolbar {
     this.leftSection.style.pointerEvents = isPlaying ? 'none' : '';
   }
 
+  setMaximize(val) {
+    this._isMaximized = Boolean(val);
+    if (this._maximizeBtn) {
+      this._maximizeBtn.classList.toggle('active', this._isMaximized);
+    }
+  }
+
+  get isMaximized() {
+    return this._isMaximized;
+  }
+
   get activeMode() { return this._activeMode; }
 }
+

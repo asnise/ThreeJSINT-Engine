@@ -23,13 +23,84 @@ export class ExportSystem {
     URL.revokeObjectURL(url);
   }
 
+  async exportZip(projectName = 'MyInteractiveProject') {
+    if (typeof JSZip === 'undefined') {
+      alert('JSZip library is not loaded. Please use Export Standalone HTML or ensure network access to cdn.jsdelivr.net.');
+      return;
+    }
+
+    const sceneData = this.sceneManager.serialize();
+    const assetsData = await this.assetManager.serializeAssets();
+    const uiData = this.uiManager ? this.uiManager.serialize() : null;
+    const nodeGraphData = this.nodeRuntime ? this.nodeRuntime.serialize() : null;
+
+    const zip = new JSZip();
+
+    const html = this._generateHTML(sceneData, assetsData, uiData, nodeGraphData);
+    zip.file('index.html', html);
+
+    const projectConfig = {
+      format: 'ThreeJSINT',
+      version: 1,
+      projectName: projectName,
+      createdAt: new Date().toISOString(),
+      scene: sceneData,
+      uiData: uiData,
+      nodeGraphData: nodeGraphData
+    };
+    zip.file('project.json', JSON.stringify(projectConfig, null, 2));
+
+    const assetsFolder = zip.folder('assets');
+    const modelsFolder = assetsFolder.folder('models');
+    const texturesFolder = assetsFolder.folder('textures');
+
+    if (this.assetManager && this.assetManager._meshes) {
+      for (const [id, m] of this.assetManager._meshes.entries()) {
+        if (m.arrayBuffer) {
+          const safeName = (m.name || id).replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+          const filename = safeName.endsWith('.glb') ? safeName : safeName + '.glb';
+          modelsFolder.file(filename, m.arrayBuffer);
+        }
+      }
+    }
+
+    if (this.assetManager && this.assetManager._textures) {
+      for (const [id, t] of this.assetManager._textures.entries()) {
+        if (t.arrayBuffer) {
+          const safeName = (t.name || id).replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+          const filename = safeName.endsWith('.png') ? safeName : safeName + '.png';
+          texturesFolder.file(filename, t.arrayBuffer);
+        }
+      }
+    }
+
+    const readme = `ThreeJSINT — Standalone Web Deployment Package
+Project: ${projectName}
+Date: ${new Date().toLocaleString()}
+
+How to deploy:
+1. Extract all files to your web server root or public_html directory.
+2. Or drag-and-drop this entire ZIP directly to Netlify Drop (netlify.com/drop) or itch.io HTML5 upload.
+3. Open index.html in any modern browser.
+`;
+    zip.file('README.txt', readme);
+
+    const content = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(content);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${projectName.replace(/[^a-zA-Z0-9_\-]/g, '_')}_Deploy.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   _generateHTML(sceneData, assetsData, uiData, nodeGraphData) {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Exported Scene — ThreeInteractEngine</title>
+<title>Exported Scene — ThreeJSINT</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: system-ui, sans-serif; }

@@ -13,10 +13,20 @@ export class UIPanel {
     this.overlay = document.createElement('div');
     this.overlay.className = 'ui-editor-modal';
     this.overlay.style.display = 'none';
+    this.overlay.addEventListener('click', (e) => {
+      if (e.target === this.overlay) this.close();
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.isOpen) {
+        this.close();
+      }
+    });
 
     this.panel = document.createElement('div');
     this.panel.className = 'ui-editor-window';
     this.overlay.appendChild(this.panel);
+
 
     const header = document.createElement('div');
     header.className = 'ui-editor-header';

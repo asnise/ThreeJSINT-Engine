@@ -1,4 +1,4 @@
-# ThreeInteractEngine — Implementation
+# ThreeJSINT — Implementation
 
 Browser-based 3D interactive scene editor powered by Three.js.  
 Place objects, import meshes/textures, set collisions & interactions, test in FPS mode, and export standalone HTML.
@@ -22,7 +22,7 @@ No install, no build step. Open `index.html` in a browser.
 ## Architecture
 
 ```
-ThreeInteractEngine/
+ThreeJSINT/
 ├── index.html                     # Entry page + Three.js importmap
 ├── css/editor.css                 # Unity-dark-theme styling
 ├── js/

@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 
 export class InteractionSystem {
-  constructor(camera, sceneManager, fpsController, mobileControls, itemInspector) {
+  constructor(camera, sceneManager, fpsController, mobileControls, itemInspector, container = document.body) {
     this.camera = camera;
     this.sceneManager = sceneManager;
     this.fpsController = fpsController;
     this.mobileControls = mobileControls;
     this.itemInspector = itemInspector;
+    this.container = container || document.body;
 
     this.enabled = false;
     this.interactRange = 3;
@@ -30,12 +31,13 @@ export class InteractionSystem {
   _createUI() {
     this.promptEl = document.createElement('div');
     this.promptEl.className = 'interact-prompt';
-    document.body.appendChild(this.promptEl);
+    this.container.appendChild(this.promptEl);
 
     this.crosshairEl = document.createElement('div');
     this.crosshairEl.className = 'crosshair';
-    document.body.appendChild(this.crosshairEl);
+    this.container.appendChild(this.crosshairEl);
   }
+
 
   enable() {
     this.enabled = true;

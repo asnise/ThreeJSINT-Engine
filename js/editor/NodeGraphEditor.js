@@ -22,6 +22,13 @@ export class NodeGraphEditor {
     this.overlay = document.createElement('div');
     this.overlay.className = 'nodegraph-modal';
     this.overlay.style.display = 'none';
+    this.overlay.addEventListener('click', (e) => {
+      if (e.target === this.overlay) this.close();
+    });
+
+    this.window = document.createElement('div');
+    this.window.className = 'nodegraph-window';
+    this.overlay.appendChild(this.window);
 
     this.header = document.createElement('div');
     this.header.className = 'nodegraph-header';
@@ -69,13 +76,14 @@ export class NodeGraphEditor {
     controls.appendChild(clearBtn);
 
     const closeBtn = document.createElement('button');
-    closeBtn.className = 'ui-editor-close-btn';
+    closeBtn.className = 'nodegraph-close-btn';
     closeBtn.textContent = '✕';
+    closeBtn.title = 'Close (ESC)';
     closeBtn.addEventListener('click', () => this.close());
     controls.appendChild(closeBtn);
 
     this.header.appendChild(controls);
-    this.overlay.appendChild(this.header);
+    this.window.appendChild(this.header);
 
     // Layer / Scope Bar
     this.layerBar = document.createElement('div');
@@ -123,7 +131,7 @@ export class NodeGraphEditor {
     });
     this.layerBar.appendChild(this.objSelect);
 
-    this.overlay.appendChild(this.layerBar);
+    this.window.appendChild(this.layerBar);
 
     // Canvas Container
     this.canvasWrap = document.createElement('div');
@@ -139,8 +147,14 @@ export class NodeGraphEditor {
     this.nodesLayer.className = 'nodegraph-nodes-layer';
     this.canvasWrap.appendChild(this.nodesLayer);
 
-    this.overlay.appendChild(this.canvasWrap);
+    this.window.appendChild(this.canvasWrap);
     this.container.appendChild(this.overlay);
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.isOpen) {
+        this.close();
+      }
+    });
 
     this._setupPanAndZoom();
   }

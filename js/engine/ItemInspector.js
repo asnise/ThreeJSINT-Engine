@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 
 export class ItemInspector {
-  constructor() {
+  constructor(container = document.body) {
+    this.container = container || document.body;
     this.isActive = false;
     this.onClose = null;
     this._inspectedClone = null;
@@ -27,6 +28,15 @@ export class ItemInspector {
 
     this._createDOM();
     this._bindEvents();
+  }
+
+  mount(container) {
+    if (!container || container === this.container) return;
+    this.container = container;
+    if (this.overlay && this.overlay.parentElement !== this.container) {
+      this.container.appendChild(this.overlay);
+    }
+    if (this.isActive) this._resize();
   }
 
   _createDOM() {
@@ -56,11 +66,13 @@ export class ItemInspector {
     hint.textContent = 'Drag to rotate · ESC to close';
     this.overlay.appendChild(hint);
 
-    document.body.appendChild(this.overlay);
+    this.container.appendChild(this.overlay);
   }
+
 
   _bindEvents() {
     this.overlay.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
       if (e.target.closest('.inspect-close')) return;
       this._isDragging = true;
       this._prevMouse = { x: e.clientX, y: e.clientY };
@@ -78,6 +90,7 @@ export class ItemInspector {
     window.addEventListener('mouseup', () => { this._isDragging = false; });
 
     this.overlay.addEventListener('touchstart', (e) => {
+      e.stopPropagation();
       if (e.target.closest('.inspect-close')) return;
       if (e.touches.length === 1) {
         this._isDragging = true;
@@ -102,6 +115,10 @@ export class ItemInspector {
         e.preventDefault();
         this.close();
       }
+    });
+
+    window.addEventListener('resize', () => {
+      if (this.isActive) this._resize();
     });
   }
 
@@ -156,12 +173,17 @@ export class ItemInspector {
   }
 
   _resize() {
-    const w = window.innerWidth * 0.7;
-    const h = window.innerHeight * 0.7;
+    const target = this.container || document.body;
+    const rect = target.getBoundingClientRect ? target.getBoundingClientRect() : { width: window.innerWidth, height: window.innerHeight };
+    const baseW = rect.width || window.innerWidth;
+    const baseH = rect.height || window.innerHeight;
+    const w = Math.max(100, Math.floor(baseW * 0.75));
+    const h = Math.max(100, Math.floor(baseH * 0.75));
     this._renderer.setSize(w, h);
     this._camera.aspect = w / h;
     this._camera.updateProjectionMatrix();
   }
+
 
   _animate() {
     if (!this.isActive) return;
