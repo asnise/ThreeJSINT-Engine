@@ -30,6 +30,11 @@ export class EditorMain {
     this.mode = 'edit';
     this.maximizeOnPlay = false;
     this.projectFS = new ProjectFileSystem();
+    this._sceneUndoStack = [];
+    this._sceneRedoStack = [];
+    this._maxSceneHistory = 50;
+    this._gizmoPreDragSnapshot = null;
+    this._autoSaveTimer = null;
 
     this._setupDOM();
     this._setupEngine();
@@ -101,7 +106,7 @@ export class EditorMain {
     this.uiManager = new UIManager();
     this.uiManager.mount(this.viewportEl);
 
-    this.nodeRuntime = new NodeGraphRuntime(this.sceneManager, this.uiManager, this.itemInspector);
+    this.nodeRuntime = new NodeGraphRuntime(this.sceneManager, this.uiManager, this.itemInspector, this.collisionSystem);
 
 
     this.interactionSystem.onObjectInteracted = (target) => {
@@ -123,7 +128,9 @@ export class EditorMain {
     this.hierarchy = new Hierarchy(this.hierarchyEl, this.sceneManager, {
       onFocusObject: (obj) => this.focusObject(obj)
     }, this.assetManager);
-    this.inspector = new Inspector(this.inspectorEl, this.sceneManager, this.assetManager);
+    this.inspector = new Inspector(this.inspectorEl, this.sceneManager, this.assetManager, {
+      itemInspector: this.itemInspector
+    });
 
     this.gizmo = new Gizmo(
       this.renderer.camera,
@@ -134,20 +141,39 @@ export class EditorMain {
 
     this.gizmo.onDraggingChanged = (isDragging) => {
       this.orbitControls.enabled = !isDragging;
-      if (!isDragging) this.inspector.refresh();
+      if (isDragging) {
+        this._gizmoPreDragSnapshot = this._createSceneSnapshot();
+      } else {
+        if (this._gizmoPreDragSnapshot) {
+          this._sceneUndoStack.push(this._gizmoPreDragSnapshot);
+          if (this._sceneUndoStack.length > this._maxSceneHistory) {
+            this._sceneUndoStack.shift();
+          }
+          this._sceneRedoStack = [];
+          this._gizmoPreDragSnapshot = null;
+        }
+        this.inspector.refresh();
+      }
     };
 
     this.uiPanel = new UIPanel(this.rootEl, this.uiManager, this.assetManager);
-    this.nodeGraphEditor = new NodeGraphEditor(this.rootEl, this.nodeRuntime, this.sceneManager, this.uiManager);
+    this.nodeGraphEditor = new NodeGraphEditor(this.rootEl, this.nodeRuntime, this.sceneManager, this.uiManager, this.assetManager);
     this.inspector.onOpenNodeGraph = (objId) => this.nodeGraphEditor.openForObject(objId);
     this.projectPanel = new ProjectPanel(this.projectEl, this.assetManager, this.sceneManager, {
-      onRename: () => this.renameProject()
+      onRename: () => this.renameProject(),
+      onOpenNodeGraphAsset: (assetId) => this.nodeGraphEditor.openForAsset(assetId)
     });
 
     this.exportSystem = new ExportSystem(this.sceneManager, this.assetManager, this.uiManager, this.nodeRuntime);
 
     this.toolbar = new Toolbar(this.toolbarEl, {
+      undo: () => this.undo(),
+      redo: () => this.redo(),
+      duplicate: () => this.duplicateSelected(),
+      deleteSelected: () => this.deleteSelected(),
       addPrimitive: (type) => this._addPrimitive(type),
+      addPlayerController: () => this._addPlayerController(),
+      addCamera: () => this._addCamera(),
       importMesh: () => this._importMesh(),
       importTexture: () => this._importTexture(),
       setGizmoMode: (mode) => this.gizmo.setMode(mode),
@@ -209,35 +235,77 @@ export class EditorMain {
       if (this.collisionSystem.isDebugVisible) {
         this.collisionSystem.updateDebugVisuals();
       }
+      this._updatePlayButtonState();
+      this._scheduleAutoSave();
+    });
+    this.sceneManager.on('objectAdded', () => {
+      this._updatePlayButtonState();
+      this._scheduleAutoSave();
+    });
+    this.sceneManager.on('objectRemoved', () => {
+      this._updatePlayButtonState();
+      this._scheduleAutoSave();
+    });
+    this.sceneManager.on('projectAssetsChanged', () => {
+      this._scheduleAutoSave();
     });
 
     this._setupViewportSelection();
     this._setupViewportDrop();
+    this._setupViewportPointerLock();
     this._addDefaultScene();
+    this._updatePlayButtonState();
   }
 
   _setupKeyboard() {
     document.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyS') {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.code === 'KeyS' || e.key?.toLowerCase() === 's')) {
         e.preventDefault();
         this.saveProjectAs();
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === 'KeyS') {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.code === 'KeyS' || e.key?.toLowerCase() === 's')) {
         e.preventDefault();
         this.saveProject();
         return;
       }
 
-      if (this.mode !== 'edit') return;
+      if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.key?.toLowerCase() === 'z')) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          this.redo();
+        } else {
+          this.undo();
+        }
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyY' || e.key?.toLowerCase() === 'y')) {
+        e.preventDefault();
+        this.redo();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyD' || e.key?.toLowerCase() === 'd')) {
+        e.preventDefault();
+        this.duplicateSelected();
+        return;
+      }
+
+      if (this.mode !== 'edit') {
+        if (this.mode === 'play') {
+          if ((e.code === 'KeyE' || e.key?.toLowerCase() === 'e') && !this.itemInspector?.isActive) {
+            this.interactionSystem._tryInteract();
+          }
+        }
+        return;
+      }
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
 
       switch (e.code) {
         case 'Delete':
         case 'Backspace':
-          if (this.sceneManager.selectedObject) {
-            this.sceneManager.removeObject(this.sceneManager.selectedObject.userData.id);
-          }
+          this.deleteSelected();
           break;
         case 'KeyF':
           if (this.sceneManager.selectedObject) {
@@ -279,10 +347,28 @@ export class EditorMain {
   }
 
   _addPrimitive(type) {
+    this._pushSceneUndo();
     const obj = Primitives.createFromType(type);
-    obj.position.y = 0.5;
+    obj.position.y = (type === 'empty' || type === 'player_controller') ? 0 : 0.5;
     this.sceneManager.addObject(obj);
     this.sceneManager.selectObject(obj.userData.id);
+  }
+
+  _addPlayerController() {
+    this._pushSceneUndo();
+    const player = Primitives.createPlayerController();
+    player.position.set(0, 0, 0);
+    this.sceneManager.addObject(player);
+    this.sceneManager.selectObject(player.userData.id);
+    this.nodeGraphEditor._createPlayerPreset();
+  }
+
+  _addCamera() {
+    this._pushSceneUndo();
+    const camera = Primitives.createCamera();
+    camera.position.set(0, 2, 5);
+    this.sceneManager.addObject(camera);
+    this.sceneManager.selectObject(camera.userData.id);
   }
 
   async _importMesh() {
@@ -296,6 +382,7 @@ export class EditorMain {
         const asset = await this.assetManager.importMesh(file);
         const instance = this.assetManager.createMeshInstance(asset.id);
         if (instance) {
+          this._pushSceneUndo();
           instance.position.y = 0.5;
           this.sceneManager.addObject(instance);
           this.sceneManager.selectObject(instance.userData.id);
@@ -330,23 +417,54 @@ export class EditorMain {
     if (this.mode === 'edit') {
       this.orbitControls.update();
     } else if (this.mode === 'play') {
-      this.fpsController.update(dt);
-      this.interactionSystem.update();
-      this.nodeRuntime.update(dt);
+      if (this._activePlayerObj) {
+        this.nodeRuntime.update(dt);
 
-      if (this.mobileControls.isMobile && this.mobileControls.enabled) {
-        const mi = this.mobileControls.getMoveInput();
-        this.fpsController.setMoveInput(mi.x, mi.z);
+        this._activePlayerObj.updateMatrixWorld(true);
+        const childCam = this._activePlayerObj.children.find(c => (c.isCamera || c.userData?.type === 'camera') && !c.userData?.isGizmo)
+          || this.sceneManager.getChildren(this._activePlayerObj.userData.id).find(c => (c.isCamera || c.userData?.type === 'camera') && !c.userData?.isGizmo);
+        if (childCam) {
+          childCam.updateMatrixWorld(true);
+          const worldPos = new THREE.Vector3();
+          const worldQuat = new THREE.Quaternion();
+          childCam.getWorldPosition(worldPos);
+          childCam.getWorldQuaternion(worldQuat);
+          this.renderer.camera.position.copy(worldPos);
+          this.renderer.camera.quaternion.copy(worldQuat);
+        } else {
+          const pCtrl = this._activePlayerObj.userData?.components?.playerController || this._activePlayerObj.userData?.playerController || {};
+          const camY = pCtrl.cameraOffsetY !== undefined ? pCtrl.cameraOffsetY : 1.6;
+          this.renderer.camera.position.copy(this._activePlayerObj.position).add(new THREE.Vector3(0, camY, 0));
+          this.renderer.camera.quaternion.copy(this._activePlayerObj.quaternion);
+        }
+        this.renderer.camera.updateMatrixWorld(true);
+
+        this.interactionSystem.update();
+
+        const radius = this._activePlayerObj.userData?.playerController?.playerRadius || 0.3;
+        this.collisionSystem.checkTriggers(this.renderer.camera.position, radius);
+      } else if (this._activeCameraObj) {
+        this.nodeRuntime.update(dt);
+
+        this._activeCameraObj.updateMatrixWorld(true);
+        const worldPos = new THREE.Vector3();
+        const worldQuat = new THREE.Quaternion();
+        this._activeCameraObj.getWorldPosition(worldPos);
+        this._activeCameraObj.getWorldQuaternion(worldQuat);
+        this.renderer.camera.position.copy(worldPos);
+        this.renderer.camera.quaternion.copy(worldQuat);
+        this.renderer.camera.updateMatrixWorld(true);
+
+        this.interactionSystem.update();
       }
-
-      this.collisionSystem.checkTriggers(
-        this.renderer.camera.position,
-        this.fpsController.playerRadius
-      );
     }
   }
 
   _savedCameraState = null;
+  _activePlayerObj = null;
+  _activeCameraObj = null;
+  _savedPlayerPos = null;
+  _savedPlayerRot = null;
 
   _applyPlayLayout(maximize) {
     if (maximize) {
@@ -369,6 +487,19 @@ export class EditorMain {
 
   play() {
     if (this.mode === 'play') return;
+
+    const playerObj = this.sceneManager.getAllObjects().find(o => 
+      (o.userData?.type === 'player_controller' || o.userData?.components?.playerController?.enabled) && this.sceneManager.isActiveInHierarchy(o.userData.id)
+    );
+    const cameraObj = this.sceneManager.getAllObjects().find(o => 
+      (o.userData?.type === 'camera' || o.isCamera || o.userData?.components?.camera?.enabled) && this.sceneManager.isActiveInHierarchy(o.userData.id)
+    );
+
+    if (!playerObj && !cameraObj) {
+      this._showToast('Cannot Run: No Camera or Player Controller found in Hierarchy. Add one to run the scene.');
+      return;
+    }
+
     this.mode = 'play';
 
     this._savedCameraState = {
@@ -384,13 +515,40 @@ export class EditorMain {
 
     if (this._gridHelper) this._gridHelper.visible = false;
 
-    const spawn = this.sceneManager.playerSpawn;
-    this.fpsController.enable(spawn.position, spawn.rotation);
+    if (playerObj) {
+      this._activePlayerObj = playerObj;
+      this._savedPlayerPos = playerObj.position.clone();
+      this._savedPlayerRot = playerObj.rotation.clone();
 
-    if (this.mobileControls.isMobile) {
-      this.mobileControls.enable((dx, dy) => {
-        this.fpsController.setLookInput(dx, dy);
+      const hasPlayerNodes = Array.from(this.nodeRuntime.nodes.values()).some(n => n.scope === 'player');
+      if (!hasPlayerNodes) {
+        this.nodeGraphEditor._createPlayerPreset();
+      }
+
+      playerObj.traverse(c => {
+        if (c.userData?.isGizmo) c.visible = false;
       });
+
+      this.nodeRuntime.enableInput(this.renderer.domElement);
+      try {
+        this.renderer.domElement.requestPointerLock?.();
+      } catch (err) {}
+    } else if (cameraObj) {
+      this._activeCameraObj = cameraObj;
+      cameraObj.traverse(c => {
+        if (c.userData?.isGizmo) c.visible = false;
+      });
+
+      const worldPos = new THREE.Vector3();
+      const worldQuat = new THREE.Quaternion();
+      cameraObj.getWorldPosition(worldPos);
+      cameraObj.getWorldQuaternion(worldQuat);
+      this.renderer.camera.position.copy(worldPos);
+      const camFov = cameraObj.userData?.components?.camera?.fov || cameraObj.userData?.camera?.fov;
+      if (camFov) {
+        this.renderer.camera.fov = camFov;
+        this.renderer.camera.updateProjectionMatrix();
+      }
     }
 
     this.interactionSystem.enable();
@@ -410,8 +568,27 @@ export class EditorMain {
     if (this.mode === 'edit') return;
     this.mode = 'edit';
 
-    this.fpsController.disable();
-    this.mobileControls.disable();
+    if (this._activePlayerObj) {
+      this.nodeRuntime.disableInput();
+      if (document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+      this._activePlayerObj.traverse(c => {
+        if (c.userData?.isGizmo) c.visible = true;
+      });
+      if (this._savedPlayerPos) {
+        this._activePlayerObj.position.copy(this._savedPlayerPos);
+        this._activePlayerObj.rotation.copy(this._savedPlayerRot);
+        if (this._activePlayerObj.updateMatrixWorld) this._activePlayerObj.updateMatrixWorld(true);
+      }
+      this._activePlayerObj = null;
+    } else if (this._activeCameraObj) {
+      this._activeCameraObj.traverse(c => {
+        if (c.userData?.isGizmo) c.visible = true;
+      });
+      this._activeCameraObj = null;
+    }
+
     this.interactionSystem.disable();
     this.nodeRuntime.reset();
 
@@ -433,7 +610,17 @@ export class EditorMain {
     if (this._gridHelper) this._gridHelper.visible = true;
 
     this.toolbar.setPlayMode(false);
+    this._updatePlayButtonState();
     this.renderer.resize();
+  }
+
+  _updatePlayButtonState() {
+    if (!this.toolbar) return;
+    const hasCameraOrPlayer = this.sceneManager.getAllObjects().some(o => 
+      (o.userData?.type === 'player_controller' || o.userData?.type === 'camera' || o.isCamera) && 
+      this.sceneManager.isActiveInHierarchy(o.userData.id)
+    );
+    this.toolbar.setPlayEnabled(hasCameraOrPlayer);
   }
 
   async loadDemo(name) {
@@ -482,6 +669,7 @@ export class EditorMain {
     if (this.collisionSystem.isDebugVisible) {
       this.collisionSystem.updateDebugVisuals();
     }
+    this._updatePlayButtonState();
   }
 
   async _serializeCurrentProject() {
@@ -500,6 +688,18 @@ export class EditorMain {
       uiData: uiData,
       nodeGraphData: nodeGraphData
     };
+  }
+
+  _scheduleAutoSave() {
+    if (this._autoSaveTimer) clearTimeout(this._autoSaveTimer);
+    this._autoSaveTimer = setTimeout(async () => {
+      try {
+        if (this.mode === 'play') return;
+        const project = await this._serializeCurrentProject();
+        await this.projectFS.saveLocalProject(project);
+      } catch (err) {
+      }
+    }, 1200);
   }
 
   async saveProject() {
@@ -763,5 +963,129 @@ export class EditorMain {
         }
       }
     });
+  }
+
+  _setupViewportPointerLock() {
+    this.renderer.domElement.addEventListener('click', () => {
+      if (this.mode === 'play') {
+        if (this.itemInspector && this.itemInspector.isActive) return;
+        try {
+          this.renderer.domElement.requestPointerLock?.();
+        } catch (e) {}
+      }
+    });
+  }
+
+  _createSceneSnapshot() {
+    return {
+      sceneData: this.sceneManager.serialize(),
+      selectedId: this.sceneManager.selectedObject?.userData?.id || null
+    };
+  }
+
+  _pushSceneUndo() {
+    this._sceneUndoStack.push(this._createSceneSnapshot());
+    if (this._sceneUndoStack.length > this._maxSceneHistory) {
+      this._sceneUndoStack.shift();
+    }
+    this._sceneRedoStack = [];
+  }
+
+  _undoScene() {
+    if (this._sceneUndoStack.length === 0) return;
+    const current = this._createSceneSnapshot();
+    this._sceneRedoStack.push(current);
+    const prev = this._sceneUndoStack.pop();
+    this.sceneManager.deserialize(prev.sceneData, this.assetManager, Primitives);
+    if (prev.selectedId) {
+      this.sceneManager.selectObject(prev.selectedId);
+    } else {
+      this.sceneManager.selectObject(null);
+    }
+    this.hierarchy.refresh();
+    this.inspector.refresh();
+    this._updatePlayButtonState();
+  }
+
+  _redoScene() {
+    if (this._sceneRedoStack.length === 0) return;
+    const current = this._createSceneSnapshot();
+    this._sceneUndoStack.push(current);
+    const next = this._sceneRedoStack.pop();
+    this.sceneManager.deserialize(next.sceneData, this.assetManager, Primitives);
+    if (next.selectedId) {
+      this.sceneManager.selectObject(next.selectedId);
+    } else {
+      this.sceneManager.selectObject(null);
+    }
+    this.hierarchy.refresh();
+    this.inspector.refresh();
+    this._updatePlayButtonState();
+  }
+
+  undo() {
+    if (this.uiPanel && this.uiPanel.isOpen) {
+      this.uiPanel.undo();
+      return;
+    }
+    this._undoScene();
+  }
+
+  redo() {
+    if (this.uiPanel && this.uiPanel.isOpen) {
+      this.uiPanel.redo();
+      return;
+    }
+    this._redoScene();
+  }
+
+  duplicateSelected() {
+    if (this.uiPanel && this.uiPanel.isOpen) {
+      if (this.uiPanel._selectedElementId && !this.uiPanel._selectedElementId.startsWith('base:')) {
+        this.uiPanel._pushUndo();
+        const clone = this.uiManager.duplicateElement(this.uiPanel._selectedElementId);
+        if (clone) {
+          this.uiPanel._selectedElementId = clone.id;
+          this.uiPanel._renderList();
+          this.uiPanel._renderProps();
+          this.uiPanel._renderPreview();
+        }
+      }
+      return;
+    }
+
+    const selected = this.sceneManager.selectedObject;
+    if (!selected) return;
+
+    this._pushSceneUndo();
+    const clone = selected.clone(true);
+    clone.userData = JSON.parse(JSON.stringify(selected.userData || {}));
+    clone.userData.id = crypto.randomUUID();
+    clone.userData.name = (clone.userData.name || 'Object') + '_Copy';
+    clone.name = clone.userData.name;
+    clone.position.x += 1;
+    clone.position.z += 1;
+    this.sceneManager.addObject(clone);
+    this.sceneManager.selectObject(clone.userData.id);
+  }
+
+  deleteSelected() {
+    if (this.uiPanel && this.uiPanel.isOpen) {
+      if (this.uiPanel._selectedElementId && !this.uiPanel._selectedElementId.startsWith('base:')) {
+        this.uiPanel._pushUndo();
+        this.uiManager.removeElement(this.uiPanel._selectedElementId);
+        this.uiPanel._selectedElementId = 'base:crosshair';
+        this.uiPanel._renderList();
+        this.uiPanel._renderProps();
+        this.uiPanel._renderPreview();
+      }
+      return;
+    }
+
+    const selected = this.sceneManager.selectedObject;
+    if (selected && selected.userData?.id) {
+      this._pushSceneUndo();
+      this.sceneManager.removeObject(selected.userData.id);
+    }
   }
 }

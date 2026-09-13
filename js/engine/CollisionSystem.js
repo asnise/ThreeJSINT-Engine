@@ -20,14 +20,14 @@ export class CollisionSystem {
     const halfH = height / 2;
 
     for (let iter = 0; iter < 2; iter++) {
-      _playerBox.min.set(pos.x - radius, pos.y - height, pos.z - radius);
-      _playerBox.max.set(pos.x + radius, pos.y, pos.z + radius);
+      _playerBox.min.set(pos.x - radius, pos.y, pos.z - radius);
+      _playerBox.max.set(pos.x + radius, pos.y + height, pos.z + radius);
 
       for (const obj of colliders) {
         this._getWorldBox(obj, _box);
         if (!_playerBox.intersectsBox(_box)) continue;
 
-        const pCenter = new THREE.Vector3(pos.x, pos.y - halfH, pos.z);
+        const pCenter = new THREE.Vector3(pos.x, pos.y + halfH, pos.z);
         const oCenter = _box.getCenter(_center);
         _box.getSize(_size);
 
@@ -43,10 +43,10 @@ export class CollisionSystem {
 
         if (overlapY < overlapX && overlapY < overlapZ) {
           if (dy > 0) {
-            pos.y = _box.max.y + height;
+            pos.y = _box.max.y;
             grounded = true;
           } else {
-            pos.y = _box.min.y;
+            pos.y = _box.min.y - height;
           }
         } else if (overlapX < overlapZ) {
           pos.x += (dx > 0 ? overlapX : -overlapX);
@@ -54,9 +54,14 @@ export class CollisionSystem {
           pos.z += (dz > 0 ? overlapZ : -overlapZ);
         }
 
-        _playerBox.min.set(pos.x - radius, pos.y - height, pos.z - radius);
-        _playerBox.max.set(pos.x + radius, pos.y, pos.z + radius);
+        _playerBox.min.set(pos.x - radius, pos.y, pos.z - radius);
+        _playerBox.max.set(pos.x + radius, pos.y + height, pos.z + radius);
       }
+    }
+
+    if (pos.y <= 0) {
+      pos.y = 0;
+      grounded = true;
     }
 
     return { position: pos, grounded };
@@ -69,9 +74,10 @@ export class CollisionSystem {
     const exited = [];
     const stayed = [];
 
-    const pMin = new THREE.Vector3(playerPos.x - radius, playerPos.y - 1.7, playerPos.z - radius);
-    const pMax = new THREE.Vector3(playerPos.x + radius, playerPos.y, playerPos.z + radius);
-    _playerBox.set(pMin, pMax);
+    const minY = Math.min(playerPos.y, playerPos.y - 1.7);
+    const maxY = Math.max(playerPos.y + 1.7, playerPos.y);
+    _playerBox.min.set(playerPos.x - radius, minY, playerPos.z - radius);
+    _playerBox.max.set(playerPos.x + radius, maxY, playerPos.z + radius);
 
     for (const obj of triggers) {
       this._getWorldBox(obj, _box);

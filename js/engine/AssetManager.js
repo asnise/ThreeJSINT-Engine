@@ -5,11 +5,13 @@ export class AssetManager {
   constructor() {
     this._textures = new Map();
     this._meshes = new Map();
+    this._nodeGraphs = new Map();
+    this._folders = new Map();
     this._gltfLoader = new GLTFLoader();
     this._textureLoader = new THREE.TextureLoader();
   }
 
-  async importMesh(file) {
+  async importMesh(file, folderId = null) {
     const arrayBuffer = await file.arrayBuffer();
     const blob = new Blob([arrayBuffer], { type: file.type || 'model/gltf-binary' });
     const url = URL.createObjectURL(blob);
@@ -33,6 +35,7 @@ export class AssetManager {
           id,
           name: file.name.replace(/\.[^.]+$/, ''),
           type: 'mesh',
+          folderId: folderId || null,
           scene: scene,
           boundingSize: { x: size.x, y: size.y, z: size.z },
           blobUrl: url,
@@ -123,7 +126,7 @@ export class AssetManager {
     return clone;
   }
 
-  async importTexture(file) {
+  async importTexture(file, folderId = null) {
     const arrayBuffer = await file.arrayBuffer();
     const blob = new Blob([arrayBuffer], { type: file.type });
     const url = URL.createObjectURL(blob);
@@ -148,6 +151,7 @@ export class AssetManager {
       id,
       name: file.name,
       type: 'texture',
+      folderId: folderId || null,
       texture,
       blobUrl: url,
       arrayBuffer,
@@ -327,7 +331,8 @@ export class AssetManager {
       const base64 = this._arrayBufferToBase64(asset.arrayBuffer);
       textures[id] = {
         name: asset.name,
-        data: `data:${this._getMimeType(asset.name)};base64,${base64}`
+        data: `data:${this._getMimeType(asset.name)};base64,${base64}`,
+        folderId: asset.folderId || null
       };
     }
 
@@ -336,11 +341,137 @@ export class AssetManager {
       const base64 = this._arrayBufferToBase64(asset.arrayBuffer);
       meshes[id] = {
         name: asset.name,
-        data: `data:model/gltf-binary;base64,${base64}`
+        data: `data:model/gltf-binary;base64,${base64}`,
+        folderId: asset.folderId || null
       };
     }
 
-    return { textures, meshes };
+    const nodeGraphs = {};
+    for (const [id, asset] of this._nodeGraphs) {
+      nodeGraphs[id] = {
+        id: asset.id,
+        name: asset.name,
+        type: 'nodegraph',
+        folderId: asset.folderId || null,
+        graphData: asset.graphData || { nodes: [], connections: [], variables: {} },
+        createdAt: asset.createdAt,
+        updatedAt: asset.updatedAt
+      };
+    }
+
+    const folders = {};
+    for (const [id, folder] of this._folders) {
+      folders[id] = {
+        id: folder.id,
+        name: folder.name,
+        type: 'folder',
+        parentFolderId: folder.parentFolderId || null,
+        createdAt: folder.createdAt
+      };
+    }
+
+    return { textures, meshes, nodeGraphs, folders };
+  }
+
+  createNodeGraphAsset(name = 'NewGraph', graphData = null, folderId = null) {
+    const id = crypto.randomUUID();
+    const cleanName = (name || 'NewGraph').replace(/\.nodegraph$/i, '');
+    const asset = {
+      id,
+      name: `${cleanName}.nodegraph`,
+      type: 'nodegraph',
+      folderId: folderId || null,
+      graphData: graphData || { nodes: [], connections: [], variables: {} },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this._nodeGraphs.set(id, asset);
+    return asset;
+  }
+
+  getNodeGraph(id) {
+    return this._nodeGraphs.get(id) || null;
+  }
+
+  getAllNodeGraphs() {
+    return Array.from(this._nodeGraphs.values());
+  }
+
+  renameNodeGraph(id, newName) {
+    const asset = this._nodeGraphs.get(id);
+    if (!asset) return false;
+    const cleanName = (newName || 'NewGraph').replace(/\.nodegraph$/i, '');
+    asset.name = `${cleanName}.nodegraph`;
+    asset.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  deleteNodeGraph(id) {
+    return this._nodeGraphs.delete(id);
+  }
+
+  createFolder(name = 'New Folder', parentFolderId = null) {
+    const id = crypto.randomUUID();
+    const folder = {
+      id,
+      name: (name || 'New Folder').trim(),
+      type: 'folder',
+      parentFolderId: parentFolderId || null,
+      createdAt: new Date().toISOString()
+    };
+    this._folders.set(id, folder);
+    return folder;
+  }
+
+  getFolder(id) {
+    return this._folders.get(id) || null;
+  }
+
+  getAllFolders() {
+    return Array.from(this._folders.values());
+  }
+
+  renameFolder(id, newName) {
+    const folder = this._folders.get(id);
+    if (!folder) return false;
+    folder.name = (newName || 'Folder').trim();
+    return true;
+  }
+
+  deleteFolder(id) {
+    const folder = this._folders.get(id);
+    if (!folder) return false;
+
+    for (const m of this._meshes.values()) {
+      if (m.folderId === id) m.folderId = folder.parentFolderId || null;
+    }
+    for (const t of this._textures.values()) {
+      if (t.folderId === id) t.folderId = folder.parentFolderId || null;
+    }
+    for (const g of this._nodeGraphs.values()) {
+      if (g.folderId === id) g.folderId = folder.parentFolderId || null;
+    }
+    for (const f of this._folders.values()) {
+      if (f.parentFolderId === id) f.parentFolderId = folder.parentFolderId || null;
+    }
+
+    return this._folders.delete(id);
+  }
+
+  moveItemToFolder(itemId, itemType, targetFolderId) {
+    if (itemType === 'mesh') {
+      const m = this._meshes.get(itemId);
+      if (m) m.folderId = targetFolderId || null;
+    } else if (itemType === 'texture') {
+      const t = this._textures.get(itemId);
+      if (t) t.folderId = targetFolderId || null;
+    } else if (itemType === 'nodegraph') {
+      const g = this._nodeGraphs.get(itemId);
+      if (g) g.folderId = targetFolderId || null;
+    } else if (itemType === 'folder') {
+      const f = this._folders.get(itemId);
+      if (f && f.id !== targetFolderId) f.parentFolderId = targetFolderId || null;
+    }
   }
 
   clear() {
@@ -354,6 +485,8 @@ export class AssetManager {
       if (asset.blobUrl) URL.revokeObjectURL(asset.blobUrl);
     }
     this._meshes.clear();
+    this._nodeGraphs.clear();
+    this._folders.clear();
   }
 
   async deserializeAssets(assetsData) {
@@ -384,6 +517,7 @@ export class AssetManager {
             id,
             name: texData.name || 'Texture',
             type: 'texture',
+            folderId: texData.folderId || null,
             texture,
             preview,
             blobUrl: url,
@@ -420,6 +554,7 @@ export class AssetManager {
             id,
             name: meshData.name,
             type: 'mesh',
+            folderId: meshData.folderId || null,
             scene,
             boundingSize: { x: size.x, y: size.y, z: size.z },
             blobUrl: url,
@@ -428,6 +563,34 @@ export class AssetManager {
         } catch (err) {
           console.warn('Failed to deserialize mesh:', id, err);
         }
+      }
+    }
+
+    if (assetsData.nodeGraphs) {
+      for (const [id, graphData] of Object.entries(assetsData.nodeGraphs)) {
+        if (!graphData) continue;
+        this._nodeGraphs.set(id, {
+          id,
+          name: graphData.name || 'Script.nodegraph',
+          type: 'nodegraph',
+          folderId: graphData.folderId || null,
+          graphData: graphData.graphData || { nodes: [], connections: [], variables: {} },
+          createdAt: graphData.createdAt || new Date().toISOString(),
+          updatedAt: graphData.updatedAt || new Date().toISOString()
+        });
+      }
+    }
+
+    if (assetsData.folders) {
+      for (const [id, folderData] of Object.entries(assetsData.folders)) {
+        if (!folderData) continue;
+        this._folders.set(id, {
+          id,
+          name: folderData.name || 'Folder',
+          type: 'folder',
+          parentFolderId: folderData.parentFolderId || null,
+          createdAt: folderData.createdAt || new Date().toISOString()
+        });
       }
     }
   }

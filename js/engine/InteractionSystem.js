@@ -1,6 +1,32 @@
 import * as THREE from 'three';
 
 export class InteractionSystem {
+  //#region [Variables/Fields]
+  camera;
+  sceneManager;
+  fpsController;
+  mobileControls;
+  itemInspector;
+  container;
+  enabled = false;
+  interactRange = 3.5;
+  currentTarget = null;
+  isInteracting = false;
+  promptEl = null;
+  crosshairEl = null;
+  onObjectInteracted = null;
+  _raycaster = new THREE.Raycaster();
+  _screenCenter = new THREE.Vector2(0, 0);
+  _boundKeyDown = null;
+  //#endregion
+
+  //#region [Properties]
+  get activeTarget() {
+    return this.currentTarget;
+  }
+  //#endregion
+
+  //#region [Public Methods]
   constructor(camera, sceneManager, fpsController, mobileControls, itemInspector, container = document.body) {
     this.camera = camera;
     this.sceneManager = sceneManager;
@@ -9,56 +35,49 @@ export class InteractionSystem {
     this.itemInspector = itemInspector;
     this.container = container || document.body;
 
-    this.enabled = false;
-    this.interactRange = 3;
-    this.currentTarget = null;
-    this.isInteracting = false;
-
-    this._raycaster = new THREE.Raycaster();
-    this._screenCenter = new THREE.Vector2(0, 0);
-
-    this.promptEl = null;
-    this.crosshairEl = null;
     this._createUI();
 
-    this.fpsController.onInteractKeyPress = () => this._tryInteract();
+    this._boundKeyDown = (e) => this._onKeyDown(e);
+
+    if (this.fpsController) {
+      this.fpsController.onInteractKeyPress = () => this._tryInteract();
+    }
 
     if (this.mobileControls) {
       this.mobileControls.onInteract = () => this._tryInteract();
     }
   }
 
-  _createUI() {
-    this.promptEl = document.createElement('div');
-    this.promptEl.className = 'interact-prompt';
-    this.container.appendChild(this.promptEl);
-
-    this.crosshairEl = document.createElement('div');
-    this.crosshairEl.className = 'crosshair';
-    this.container.appendChild(this.crosshairEl);
+  setCamera(camera) {
+    this.camera = camera;
   }
-
 
   enable() {
     this.enabled = true;
     this.currentTarget = null;
     this.isInteracting = false;
-    this.crosshairEl.style.display = 'block';
+    if (this.crosshairEl) this.crosshairEl.style.display = 'block';
+    window.addEventListener('keydown', this._boundKeyDown);
   }
 
   disable() {
     this.enabled = false;
     this.currentTarget = null;
     this.isInteracting = false;
-    this.promptEl.style.display = 'none';
-    this.crosshairEl.style.display = 'none';
+    if (this.promptEl) this.promptEl.style.display = 'none';
+    if (this.crosshairEl) this.crosshairEl.style.display = 'none';
     if (this.mobileControls) {
       this.mobileControls.hideInteractButton();
     }
+    window.removeEventListener('keydown', this._boundKeyDown);
+  }
+
+  tryInteract() {
+    return this._tryInteract();
   }
 
   update() {
-    if (!this.enabled || this.isInteracting) return;
+    if (!this.enabled || this.isInteracting || !this.camera) return;
 
     this._raycaster.setFromCamera(this._screenCenter, this.camera);
 
@@ -76,22 +95,30 @@ export class InteractionSystem {
     let found = null;
 
     for (const hit of intersects) {
-      if (hit.distance > this.interactRange) continue;
-
       let target = hit.object;
-      while (target && !target.userData?.interaction?.enabled) {
-        target = target.parent;
+      while (target && !(target.userData?.components?.interaction?.enabled || target.userData?.interaction?.enabled)) {
+        if (target.parent && target.parent !== this.sceneManager.scene) {
+          target = target.parent;
+        } else {
+          target = null;
+          break;
+        }
       }
-      if (target && target.userData?.interaction?.enabled) {
-        found = target;
-        break;
+      if (target) {
+        const inter = target.userData?.components?.interaction || target.userData?.interaction || {};
+        const maxDist = inter.maxDistance !== undefined ? inter.maxDistance : this.interactRange;
+        if (hit.distance <= maxDist) {
+          found = target;
+          break;
+        }
       }
     }
 
     if (found !== this.currentTarget) {
       this.currentTarget = found;
       if (found) {
-        const text = found.userData.interaction.promptText || 'Press E to interact';
+        const inter = found.userData?.components?.interaction || found.userData?.interaction || {};
+        const text = inter.promptText || 'Press E to interact';
         this.promptEl.textContent = text;
         this.promptEl.style.display = 'block';
         if (this.mobileControls?.isMobile) {
@@ -105,11 +132,30 @@ export class InteractionSystem {
       }
     }
   }
+  //#endregion
+
+  //#region [Private Methods]
+  _createUI() {
+    this.promptEl = document.createElement('div');
+    this.promptEl.className = 'interact-prompt';
+    this.container.appendChild(this.promptEl);
+
+    this.crosshairEl = document.createElement('div');
+    this.crosshairEl.className = 'crosshair';
+    this.container.appendChild(this.crosshairEl);
+  }
+
+  _onKeyDown(e) {
+    if (!this.enabled || this.isInteracting) return;
+    if (e.code === 'KeyE' || e.key?.toLowerCase() === 'e') {
+      this._tryInteract();
+    }
+  }
 
   _tryInteract() {
     if (!this.enabled || !this.currentTarget || this.isInteracting) return;
 
-    const interaction = this.currentTarget.userData?.interaction;
+    const interaction = this.currentTarget.userData?.components?.interaction || this.currentTarget.userData?.interaction;
     if (!interaction?.enabled) return;
 
     if (this.onObjectInteracted) {
@@ -123,20 +169,33 @@ export class InteractionSystem {
 
   _startInspect(target) {
     this.isInteracting = true;
-    this.promptEl.style.display = 'none';
-    this.crosshairEl.style.display = 'none';
+    if (this.promptEl) this.promptEl.style.display = 'none';
+    if (this.crosshairEl) this.crosshairEl.style.display = 'none';
 
     if (this.mobileControls) {
       this.mobileControls.hideInteractButton();
     }
 
-    this.fpsController.setLockState('None');
+    if (document.pointerLockElement) {
+      try { document.exitPointerLock(); } catch (err) {}
+    }
+    if (this.fpsController) {
+      this.fpsController.setLockState('None');
+    }
 
     this.itemInspector.inspect(target);
     this.itemInspector.onClose = () => {
       this.isInteracting = false;
-      this.crosshairEl.style.display = 'block';
-      this.fpsController.setLockState('Locked');
+      if (this.enabled) {
+        if (this.crosshairEl) this.crosshairEl.style.display = 'block';
+        const lockTarget = this.container?.querySelector?.('canvas') || this.container;
+        if (lockTarget && lockTarget.requestPointerLock) {
+          try { lockTarget.requestPointerLock(); } catch (err) {}
+        } else if (this.fpsController) {
+          this.fpsController.setLockState('Locked');
+        }
+      }
     };
   }
+  //#endregion
 }

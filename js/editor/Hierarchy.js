@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { Primitives } from '../engine/Primitives.js';
 
 const CUBE_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" style="vertical-align:middle;flex-shrink:0;"><path d="M8 1.5 L14.5 5.25 L14.5 12.75 L8 16.5 L1.5 12.75 L1.5 5.25 Z"/><path d="M8 1.5 L8 16.5"/><path d="M1.5 5.25 L8 9 L14.5 5.25"/></svg>';
+const PLAYER_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;flex-shrink:0;color:#06b6d4;"><circle cx="12" cy="7" r="4"/><path d="M5.5 21v-2a6.5 6.5 0 0 1 13 0v2"/></svg>';
+const CAMERA_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;flex-shrink:0;color:#818cf8;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
 
 export class Hierarchy {
   //#region [Variables/Fields]
@@ -192,10 +194,13 @@ export class Hierarchy {
     subContent.className = 'context-submenu-content';
 
     const primitives = [
+      { type: 'empty', label: 'Empty GameObject' },
       { type: 'cube', label: 'Cube' },
       { type: 'sphere', label: 'Sphere' },
       { type: 'plane', label: 'Plane' },
-      { type: 'cylinder', label: 'Cylinder' }
+      { type: 'cylinder', label: 'Cylinder' },
+      { type: 'player_controller', label: 'Player Controller' },
+      { type: 'camera', label: 'Camera' }
     ];
 
     primitives.forEach(p => {
@@ -230,7 +235,7 @@ export class Hierarchy {
         obj.position.copy(worldPos);
       }
     } else {
-      obj.position.set(0, 0.5, 0);
+      obj.position.set(0, (type === 'player_controller' || type === 'empty') ? 0 : 0.5, 0);
     }
 
     this.sceneManager.addObject(obj);
@@ -241,11 +246,9 @@ export class Hierarchy {
   }
 
   _handleCreateEmpty(parentId = null) {
-    const group = new THREE.Group();
     const count = this.sceneManager.getAllObjects().filter(o => (o.userData?.name || '').startsWith('GameObject')).length + 1;
     const name = `GameObject_${String(count).padStart(3, '0')}`;
-    group.name = name;
-    group.userData = Primitives.makeUserData(name, 'empty');
+    const group = Primitives.createEmpty(name);
 
     if (parentId) {
       const parent = this.sceneManager.getObject(parentId);
@@ -356,7 +359,13 @@ export class Hierarchy {
 
     const icon = document.createElement('span');
     icon.className = 'icon';
-    icon.innerHTML = CUBE_ICON_SVG;
+    if (obj.userData?.type === 'player_controller') {
+      icon.innerHTML = PLAYER_ICON_SVG;
+    } else if (obj.userData?.type === 'camera' || obj.isCamera) {
+      icon.innerHTML = CAMERA_ICON_SVG;
+    } else {
+      icon.innerHTML = CUBE_ICON_SVG;
+    }
     item.appendChild(icon);
 
     const label = document.createElement('span');

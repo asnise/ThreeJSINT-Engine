@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Exported Scene ThreeJSINT</title>
+<style>
+/* __EXPORT_CSS__ */
+</style>
+</head>
+<body>
+<div id="container"></div>
+<div class="custom-ui-layer" id="customUILayer"></div>
+<div class="start-screen" id="startScreen"><span>Click to Start</span></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const SCENE_DATA = /* __SCENE_DATA__ */ {};
+const ASSETS_DATA = /* __ASSETS_DATA__ */ {};
+const UI_DATA = /* __UI_DATA__ */ {};
+const NODE_DATA = /* __NODE_DATA__ */ {};
+
+/* __EXPORT_RUNTIME_CORE__ */
+
+/* __EXPORT_RUNTIME_SCENE__ */
+
+/* __EXPORT_RUNTIME_UI__ */
+
+/* __RUNTIME_CLASS_SOURCE__ */
+
+/* __EXPORT_RUNTIME_PHYSICS__ */
+
+/* __EXPORT_RUNTIME_CONTROLLERS__ */
+
+/* __EXPORT_RUNTIME_LOOP__ */
+</script>
+</body>
+</html>

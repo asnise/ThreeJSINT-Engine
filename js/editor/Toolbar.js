@@ -43,6 +43,16 @@ export class Toolbar {
     this.leftSection.style.pointerEvents = isPlaying ? 'none' : '';
   }
 
+  setPlayEnabled(enabled) {
+    if (!this._playBtn) return;
+    this._playBtn.classList.toggle('disabled', !enabled);
+    if (!enabled) {
+      this._playBtn.title = 'Cannot Run: No Camera or Player Controller in Hierarchy';
+    } else {
+      this._playBtn.title = 'Play Scene';
+    }
+  }
+
   setMaximize(val) {
     this._isMaximized = Boolean(val);
     if (this._maximizeBtn) {
@@ -77,13 +87,23 @@ export class Toolbar {
       { label: 'Export Standalone HTML', action: () => this.callbacks.exportHTML() },
     ], false);
 
+    this._addDropdown('Edit', [
+      { label: 'Undo (Ctrl+Z)', action: () => this.callbacks.undo?.() },
+      { label: 'Redo (Ctrl+Y)', action: () => this.callbacks.redo?.() },
+      { label: 'Duplicate (Ctrl+D)', action: () => this.callbacks.duplicate?.() },
+      { label: 'Delete (Delete)', action: () => this.callbacks.deleteSelected?.() },
+    ], false);
+
     this._addSeparator();
 
     this._addDropdown('Add', [
+      { label: 'Empty GameObject', action: () => this.callbacks.addPrimitive('empty') },
       { label: 'Cube', action: () => this.callbacks.addPrimitive('cube') },
       { label: 'Sphere', action: () => this.callbacks.addPrimitive('sphere') },
       { label: 'Plane', action: () => this.callbacks.addPrimitive('plane') },
       { label: 'Cylinder', action: () => this.callbacks.addPrimitive('cylinder') },
+      { label: 'Player Controller', action: () => this.callbacks.addPlayerController?.() },
+      { label: 'Camera', action: () => this.callbacks.addCamera?.() },
     ], true);
 
     this._addSeparator();

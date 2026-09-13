@@ -123,9 +123,13 @@ export class ItemInspector {
   }
 
   inspect(sourceObject) {
+    if (!sourceObject) return;
     const clone = sourceObject.clone(true);
 
     clone.traverse(child => {
+      if (child.userData?.isGizmo || child.name?.includes('Gizmo') || child.name?.includes('Helper')) {
+        child.visible = false;
+      }
       if (child.isMesh && child.material) {
         child.material = child.material.clone();
       }
@@ -136,7 +140,7 @@ export class ItemInspector {
     clone.position.sub(center);
 
     const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
+    const maxDim = Math.max(size.x, size.y, size.z, 0.5);
     this._camera.position.set(0, 0, maxDim * 2.2);
     this._camera.lookAt(0, 0, 0);
 

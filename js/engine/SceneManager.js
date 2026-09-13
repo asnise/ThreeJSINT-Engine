@@ -1,6 +1,22 @@
 import * as THREE from 'three';
 
 export class SceneManager {
+  //#region [Variables/Fields]
+  scene = null;
+  _objects = null;
+  _selected = null;
+  _callbacks = null;
+  playerSpawn = null;
+  //#endregion
+
+  //#region [Properties]
+  get selectedObject() { return this._selected; }
+  //#endregion
+
+  //#region [Unity Methods]
+  //#endregion
+
+  //#region [Public Methods]
   constructor(threeScene) {
     this.scene = threeScene;
     this._objects = new Map();
@@ -27,19 +43,23 @@ export class SceneManager {
       obj.userData.parentId = null;
     }
     this._objects.set(obj.userData.id, obj);
-    if (!obj.userData.parentId) {
+    if (!obj.userData.parentId && !obj.parent) {
       this.scene.add(obj);
     }
     obj.visible = this.isActiveInHierarchy(obj.userData.id);
 
     obj.traverse((child) => {
-      if (child !== obj && child.userData?.id) {
-        if (child.userData.parentId === undefined) {
-          child.userData.parentId = obj.userData.id;
+      if (child !== obj && !child.userData?.isGizmo && !child.userData?._isOverlay) {
+        if (child.userData?.id || child.userData?.type || child.userData?.components || child.isCamera) {
+          if (!child.userData) child.userData = {};
+          if (!child.userData.id) child.userData.id = crypto.randomUUID();
+          if (child.userData.parentId === undefined || child.userData.parentId === null) {
+            child.userData.parentId = child.parent?.userData?.id || obj.userData.id;
+          }
+          this._objects.set(child.userData.id, child);
+          child.visible = this.isActiveInHierarchy(child.userData.id);
+          this._emit('objectAdded', child);
         }
-        this._objects.set(child.userData.id, child);
-        child.visible = this.isActiveInHierarchy(child.userData.id);
-        this._emit('objectAdded', child);
       }
     });
 
@@ -129,17 +149,6 @@ export class SceneManager {
     return true;
   }
 
-  _updateChildrenVisibility(parentObj) {
-    const pId = parentObj.userData?.id;
-    if (!pId) return;
-    for (const child of this._objects.values()) {
-      if (child.userData?.parentId === pId) {
-        child.visible = this.isActiveInHierarchy(child.userData.id);
-        this._updateChildrenVisibility(child);
-      }
-    }
-  }
-
   setParent(childId, parentId) {
     const child = this._objects.get(childId);
     if (!child) return;
@@ -192,11 +201,19 @@ export class SceneManager {
   }
 
   getInteractableObjects() {
-    return this.getAllObjects().filter(o => o.userData?.interaction?.enabled && this.isActiveInHierarchy(o.userData.id));
+    return this.getAllObjects().filter(o => {
+      const active = this.isActiveInHierarchy(o.userData.id);
+      const inter = o.userData?.components?.interaction || o.userData?.interaction;
+      return inter?.enabled && active;
+    });
   }
 
   getColliderObjects() {
-    return this.getAllObjects().filter(o => o.userData?.collider?.enabled && this.isActiveInHierarchy(o.userData.id));
+    return this.getAllObjects().filter(o => {
+      const active = this.isActiveInHierarchy(o.userData.id);
+      const col = o.userData?.components?.collider || o.userData?.collider;
+      return col?.enabled && active;
+    });
   }
 
   selectObject(idOrNull) {
@@ -211,8 +228,6 @@ export class SceneManager {
     this._emit('objectSelected', obj);
   }
 
-  get selectedObject() { return this._selected; }
-
   on(event, cb) {
     if (this._callbacks[event]) this._callbacks[event].push(cb);
   }
@@ -223,11 +238,24 @@ export class SceneManager {
     }
   }
 
-  _emit(event, ...args) {
-    (this._callbacks[event] || []).forEach(cb => cb(...args));
-  }
-
   serialize() {
+    for (const root of Array.from(this._objects.values())) {
+      root.traverse((child) => {
+        if (child !== root && !child.userData?.isGizmo && !child.userData?._isOverlay) {
+          if (child.userData?.id || child.userData?.type || child.userData?.components || child.isCamera) {
+            if (!child.userData) child.userData = {};
+            if (!child.userData.id) child.userData.id = crypto.randomUUID();
+            if (!child.userData.parentId) {
+              child.userData.parentId = child.parent?.userData?.id || root.userData.id;
+            }
+            if (!this._objects.has(child.userData.id)) {
+              this._objects.set(child.userData.id, child);
+            }
+          }
+        }
+      });
+    }
+
     const objects = [];
     const seen = new Set();
     for (const obj of this._objects.values()) {
@@ -327,10 +355,16 @@ export class SceneManager {
       deduplicatedObjects.push(o);
     }
 
+    const getDepth = (id, visited = new Set()) => {
+      if (!id || visited.has(id)) return 0;
+      visited.add(id);
+      const item = deduplicatedObjects.find(o => o.userData?.id === id);
+      if (!item || !item.userData?.parentId) return 0;
+      return 1 + getDepth(item.userData.parentId, visited);
+    };
+
     const sortedObjects = [...deduplicatedObjects].sort((a, b) => {
-      const aHasParent = a.userData?.parentId ? 1 : 0;
-      const bHasParent = b.userData?.parentId ? 1 : 0;
-      return aHasParent - bHasParent;
+      return getDepth(a.userData?.id) - getDepth(b.userData?.id);
     });
 
     const applyMaterials = (targetObj, matDataList, isImported = false) => {
@@ -461,9 +495,41 @@ export class SceneManager {
             if (p.parent) p.parent.remove(p);
           });
         }
-      } else if (objData.userData.primitiveType && primitives) {
-        const color = objData.color ? new THREE.Color(objData.color) : 0x888888;
-        obj = primitives.createFromType(objData.userData.primitiveType, color);
+      } else if (primitives) {
+        obj = primitives.createGameObject(objData.userData?.name);
+        const comps = objData.userData?.components || {};
+        const hasSavedChildCam = rawObjects.some(o => o.userData?.parentId === objData.userData?.id && (o.userData?.type === 'camera' || o.userData?.components?.camera || o.isCamera));
+
+        if (comps.mesh) {
+          primitives.attachMeshComponent(obj, comps.mesh);
+        } else if (objData.userData?.primitiveType) {
+          const color = objData.color ? (typeof objData.color === 'string' ? objData.color : '#' + new THREE.Color(objData.color).getHexString()) : '#888888';
+          primitives.attachMeshComponent(obj, { geometryType: objData.userData.primitiveType, color });
+        }
+
+        if (comps.collider) {
+          primitives.attachColliderComponent(obj, comps.collider);
+        } else if (objData.userData?.collider) {
+          primitives.attachColliderComponent(obj, objData.userData.collider);
+        }
+
+        if (comps.interaction) {
+          primitives.attachInteractionComponent(obj, comps.interaction);
+        } else if (objData.userData?.interaction) {
+          primitives.attachInteractionComponent(obj, objData.userData.interaction);
+        }
+
+        if (comps.playerController || objData.userData?.type === 'player_controller') {
+          primitives.attachPlayerControllerComponent(obj, comps.playerController || objData.userData?.playerController || {}, !hasSavedChildCam);
+        }
+
+        if (comps.camera || objData.userData?.type === 'camera') {
+          primitives.attachCameraComponent(obj, comps.camera || objData.userData?.camera || {});
+        }
+
+        if (comps.nodeGraph) {
+          primitives.attachNodeGraphComponent(obj, comps.nodeGraph);
+        }
       } else {
         continue;
       }
@@ -489,13 +555,27 @@ export class SceneManager {
         }
       }
 
-      this.addObject(obj);
+      if (objData.userData?.parentId && this._objects.has(objData.userData.parentId)) {
+        const parent = this._objects.get(objData.userData.parentId);
+        parent.add(obj);
+        this._objects.set(obj.userData.id, obj);
+        alreadyParented.add(obj.userData.id);
+        this._emit('objectAdded', obj);
+      } else {
+        this.addObject(obj);
+      }
       applyTextures(obj, objData.userData?.textures);
     }
 
     for (const objData of deduplicatedObjects) {
       if (objData.userData?.parentId && !alreadyParented.has(objData.userData.id)) {
-        this.setParent(objData.userData.id, objData.userData.parentId);
+        const parentObj = this._objects.get(objData.userData.parentId);
+        const childObj = this._objects.get(objData.userData.id);
+        if (parentObj && childObj && childObj.parent !== parentObj) {
+          if (childObj.parent) childObj.parent.remove(childObj);
+          parentObj.add(childObj);
+          alreadyParented.add(objData.userData.id);
+        }
       }
     }
 
@@ -505,4 +585,22 @@ export class SceneManager {
 
     this._emit('sceneChanged');
   }
+  //#endregion
+
+  //#region [Private Methods]
+  _updateChildrenVisibility(parentObj) {
+    const pId = parentObj.userData?.id;
+    if (!pId) return;
+    for (const child of this._objects.values()) {
+      if (child.userData?.parentId === pId) {
+        child.visible = this.isActiveInHierarchy(child.userData.id);
+        this._updateChildrenVisibility(child);
+      }
+    }
+  }
+
+  _emit(event, ...args) {
+    (this._callbacks[event] || []).forEach(cb => cb(...args));
+  }
+  //#endregion
 }

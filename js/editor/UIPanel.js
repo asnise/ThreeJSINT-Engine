@@ -7,6 +7,7 @@ export class UIPanel {
   _selectedElementId = null;
   _showGuides = true;
   _showAnchors = true;
+  _snapEnabled = true;
   _previewScale = 1;
   _userZoom = 1;
   _activePreset = '1280x720';
@@ -23,6 +24,14 @@ export class UIPanel {
   _isCanvasPanning = false;
   _spacePressed = false;
   _zoomLabel = null;
+  _undoStack = [];
+  _redoStack = [];
+  _maxHistory = 50;
+  _dragStartSnapshot = null;
+  _resizeStartSnapshot = null;
+  _inputPreEditSnapshot = null;
+  _undoBtn = null;
+  _redoBtn = null;
   //#endregion
 
   //#region [Properties]
@@ -63,6 +72,7 @@ export class UIPanel {
     }
     this._renderList();
     this._renderProps();
+    this._updateUndoRedoButtons();
     setTimeout(() => {
       this._updatePreviewScale();
       this._renderPreview();
@@ -72,6 +82,38 @@ export class UIPanel {
   close() {
     this.isOpen = false;
     this.overlay.style.display = 'none';
+    this._isDragging = false;
+    this._isResizing = false;
+    this._clearSnapGuides();
+    this._inputPreEditSnapshot = null;
+    this._dragStartSnapshot = null;
+    this._resizeStartSnapshot = null;
+  }
+
+  undo() {
+    if (this._undoStack.length === 0) return;
+    const current = this._createSnapshot();
+    this._redoStack.push(current);
+    const prev = this._undoStack.pop();
+    this._applySnapshot(prev);
+    this._updateUndoRedoButtons();
+  }
+
+  redo() {
+    if (this._redoStack.length === 0) return;
+    const current = this._createSnapshot();
+    this._undoStack.push(current);
+    const next = this._redoStack.pop();
+    this._applySnapshot(next);
+    this._updateUndoRedoButtons();
+  }
+
+  canUndo() {
+    return this._undoStack.length > 0;
+  }
+
+  canRedo() {
+    return this._redoStack.length > 0;
   }
   //#endregion
 
@@ -133,9 +175,26 @@ export class UIPanel {
       }
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
 
+      if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyZ' || e.key.toLowerCase() === 'z')) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          this.redo();
+        } else {
+          this.undo();
+        }
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyY' || e.key.toLowerCase() === 'y')) {
+        e.preventDefault();
+        this.redo();
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyD') {
         e.preventDefault();
         if (this._selectedElementId && !this._selectedElementId.startsWith('base:')) {
+          this._pushUndo();
           const clone = this.uiManager.duplicateElement(this._selectedElementId);
           if (clone) {
             this._selectedElementId = clone.id;
@@ -149,6 +208,7 @@ export class UIPanel {
 
       if (e.code === 'Delete' || e.code === 'Backspace') {
         if (this._selectedElementId && !this._selectedElementId.startsWith('base:')) {
+          this._pushUndo();
           this.uiManager.removeElement(this._selectedElementId);
           this._selectedElementId = 'base:crosshair';
           this._renderList();
@@ -175,6 +235,7 @@ export class UIPanel {
           : this.uiManager.getElement(this._selectedElementId);
 
         if (target && !target.locked) {
+          this._pushUndo();
           const anchor = target.anchor || 'top-left';
           const curOx = target.offsetX || 0;
           const curOy = target.offsetY || 0;
@@ -245,6 +306,7 @@ export class UIPanel {
       btn.className = 'btn-add-ui';
       btn.innerHTML = `${this._getIconSvg(t.type)}<span>+ ${t.label}</span>`;
       btn.addEventListener('click', () => {
+        this._pushUndo();
         const el = this.uiManager.addElement(t.type);
         this._selectedElementId = el.id;
         this._renderList();
@@ -313,6 +375,23 @@ export class UIPanel {
       this._renderPreview();
     });
     tbLeft.appendChild(resSelect);
+
+    this._undoBtn = document.createElement('button');
+    this._undoBtn.className = 'ui-preview-tool-btn';
+    this._undoBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg><span>Undo</span>`;
+    this._undoBtn.title = 'Undo (Ctrl+Z)';
+    this._undoBtn.disabled = true;
+    this._undoBtn.addEventListener('click', () => this.undo());
+    tbLeft.appendChild(this._undoBtn);
+
+    this._redoBtn = document.createElement('button');
+    this._redoBtn.className = 'ui-preview-tool-btn';
+    this._redoBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg><span>Redo</span>`;
+    this._redoBtn.title = 'Redo (Ctrl+Y / Ctrl+Shift+Z)';
+    this._redoBtn.disabled = true;
+    this._redoBtn.addEventListener('click', () => this.redo());
+    tbLeft.appendChild(this._redoBtn);
+
     previewToolbar.appendChild(tbLeft);
 
     const tbRight = document.createElement('div');
@@ -381,6 +460,17 @@ export class UIPanel {
       this._renderPreview();
     });
     tbRight.appendChild(anchorsBtn);
+
+    const snapBtn = document.createElement('button');
+    snapBtn.className = `ui-preview-tool-btn ${this._snapEnabled ? 'active' : ''}`;
+    snapBtn.textContent = 'Snap';
+    snapBtn.title = 'Toggle Snap Guides';
+    snapBtn.addEventListener('click', () => {
+      this._snapEnabled = !this._snapEnabled;
+      snapBtn.classList.toggle('active', this._snapEnabled);
+      if (!this._snapEnabled) this._clearSnapGuides();
+    });
+    tbRight.appendChild(snapBtn);
 
     previewToolbar.appendChild(tbRight);
     this.previewCol.appendChild(previewToolbar);
@@ -789,26 +879,39 @@ export class UIPanel {
       this._isDragging = true;
       const startX = e.clientX;
       const startY = e.clientY;
-      const startOx = config.offsetX || 0;
-      const startOy = config.offsetY || 0;
       const anchor = config.anchor || 'top-left';
+      const curOx = config.offsetX || 0;
+      const curOy = config.offsetY || 0;
+      const sz = this._getElementSize(id, config);
+      const initBounds = this._getBoundsFromOffset(anchor, curOx, curOy, sz.width, sz.height);
+      const startLeft = initBounds.left;
+      const startTop = initBounds.top;
+      this._dragStartSnapshot = this._createSnapshot();
 
-      this._showTooltip(`X: ${startOx}px, Y: ${startOy}px`);
+      this._showTooltip(`X: ${curOx}px, Y: ${curOy}px`);
 
       const onPointerMove = (moveEv) => {
         if (!this._isDragging) return;
         const dx = (moveEv.clientX - startX) / this._previewScale;
         const dy = (moveEv.clientY - startY) / this._previewScale;
 
-        let newOx = anchor.includes('right') ? Math.round(startOx - dx) : Math.round(startOx + dx);
-        let newOy = anchor.includes('bottom') ? Math.round(startOy - dy) : Math.round(startOy + dy);
+        const rawLeft = startLeft + dx;
+        const rawTop = startTop + dy;
 
-        if (anchor === 'center' || anchor === 'middle-center' || anchor === 'top-center' || anchor === 'bottom-center') {
-          if (Math.abs(newOx) <= 5) newOx = 0;
+        let finalLeft = rawLeft;
+        let finalTop = rawTop;
+        let guides = [];
+
+        if (this._snapEnabled && !moveEv.altKey) {
+          const snapResult = this._snapElement(id, rawLeft, rawTop, sz.width, sz.height);
+          finalLeft = snapResult.left;
+          finalTop = snapResult.top;
+          guides = snapResult.guides;
         }
-        if (anchor === 'center' || anchor === 'middle-center' || anchor === 'center-left' || anchor === 'center-right') {
-          if (Math.abs(newOy) <= 5) newOy = 0;
-        }
+
+        const newOffset = this._boundsToOffset(anchor, finalLeft, finalTop, sz.width, sz.height);
+        const newOx = newOffset.offsetX;
+        const newOy = newOffset.offsetY;
 
         if (id.startsWith('base:')) {
           const bKey = id.replace('base:', '');
@@ -820,11 +923,31 @@ export class UIPanel {
         this._showTooltip(`X: ${newOx}px, Y: ${newOy}px`);
         this._renderProps();
         this._renderPreview();
+
+        if (guides.length > 0) {
+          this._renderSnapGuides(guides);
+        } else {
+          this._clearSnapGuides();
+        }
       };
 
       const onPointerUp = () => {
         this._isDragging = false;
         this._hideTooltip();
+        this._clearSnapGuides();
+        if (this._dragStartSnapshot) {
+          const finalOx = (id.startsWith('base:')
+            ? this.uiManager.baseUI[id.replace('base:', '')]?.offsetX
+            : this.uiManager.getElement(id)?.offsetX) ?? curOx;
+          const finalOy = (id.startsWith('base:')
+            ? this.uiManager.baseUI[id.replace('base:', '')]?.offsetY
+            : this.uiManager.getElement(id)?.offsetY) ?? curOy;
+
+          if (finalOx !== curOx || finalOy !== curOy) {
+            this._pushUndo(this._dragStartSnapshot);
+          }
+          this._dragStartSnapshot = null;
+        }
         window.removeEventListener('pointermove', onPointerMove);
         window.removeEventListener('pointerup', onPointerUp);
       };
@@ -836,6 +959,7 @@ export class UIPanel {
 
   _startResize(e, el, handle) {
     this._isResizing = true;
+    this._resizeStartSnapshot = this._createSnapshot();
     const startX = e.clientX;
     const startY = e.clientY;
     const startW = typeof el.width === 'number' ? el.width : parseInt(el.width) || 100;
@@ -895,12 +1019,378 @@ export class UIPanel {
     const onPointerUp = () => {
       this._isResizing = false;
       this._hideTooltip();
+      this._clearSnapGuides();
+      if (this._resizeStartSnapshot) {
+        const curEl = this.uiManager.getElement(el.id);
+        if (curEl && (curEl.width !== startW || curEl.height !== startH || curEl.offsetX !== startOx || curEl.offsetY !== startOy)) {
+          this._pushUndo(this._resizeStartSnapshot);
+        }
+        this._resizeStartSnapshot = null;
+      }
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
     };
 
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+  }
+
+  _getElementSize(id, config) {
+    if (id === 'base:crosshair') {
+      const s = config.size || 16;
+      return { width: s, height: s };
+    }
+    if (id === 'base:prompt') {
+      return { width: 180, height: 32 };
+    }
+    if (id === 'base:joystick') {
+      const s = config.baseSize || 100;
+      return { width: s, height: s };
+    }
+    const w = typeof config.width === 'number' ? config.width : (parseInt(config.width) || 120);
+    const h = typeof config.height === 'number' ? config.height : (parseInt(config.height) || 40);
+    return { width: w, height: h };
+  }
+
+  _getBoundsFromOffset(anchor, ox, oy, width, height) {
+    const sw = this._screenW;
+    const sh = this._screenH;
+    let left = 0;
+    let top = 0;
+
+    switch (anchor) {
+      case 'top-left':
+        left = ox;
+        top = oy;
+        break;
+      case 'top-center':
+        left = sw / 2 + ox - width / 2;
+        top = oy;
+        break;
+      case 'top-right':
+        left = sw - ox - width;
+        top = oy;
+        break;
+      case 'center-left':
+        left = ox;
+        top = sh / 2 + oy - height / 2;
+        break;
+      case 'center':
+      case 'middle-center':
+        left = sw / 2 + ox - width / 2;
+        top = sh / 2 + oy - height / 2;
+        break;
+      case 'center-right':
+        left = sw - ox - width;
+        top = sh / 2 + oy - height / 2;
+        break;
+      case 'bottom-left':
+        left = ox;
+        top = sh - oy - height;
+        break;
+      case 'bottom-center':
+        left = sw / 2 + ox - width / 2;
+        top = sh - oy - height;
+        break;
+      case 'bottom-right':
+        left = sw - ox - width;
+        top = sh - oy - height;
+        break;
+      default:
+        left = ox;
+        top = oy;
+        break;
+    }
+
+    return {
+      left,
+      top,
+      right: left + width,
+      bottom: top + height,
+      centerX: left + width / 2,
+      centerY: top + height / 2,
+      width,
+      height
+    };
+  }
+
+  _boundsToOffset(anchor, left, top, width, height) {
+    const sw = this._screenW;
+    const sh = this._screenH;
+    const right = left + width;
+    const bottom = top + height;
+    const centerX = left + width / 2;
+    const centerY = top + height / 2;
+
+    let ox = 0;
+    let oy = 0;
+
+    switch (anchor) {
+      case 'top-left':
+        ox = left;
+        oy = top;
+        break;
+      case 'top-center':
+        ox = centerX - sw / 2;
+        oy = top;
+        break;
+      case 'top-right':
+        ox = sw - right;
+        oy = top;
+        break;
+      case 'center-left':
+        ox = left;
+        oy = centerY - sh / 2;
+        break;
+      case 'center':
+      case 'middle-center':
+        ox = centerX - sw / 2;
+        oy = centerY - sh / 2;
+        break;
+      case 'center-right':
+        ox = sw - right;
+        oy = centerY - sh / 2;
+        break;
+      case 'bottom-left':
+        ox = left;
+        oy = sh - bottom;
+        break;
+      case 'bottom-center':
+        ox = centerX - sw / 2;
+        oy = sh - bottom;
+        break;
+      case 'bottom-right':
+        ox = sw - right;
+        oy = sh - bottom;
+        break;
+      default:
+        ox = left;
+        oy = top;
+        break;
+    }
+
+    return {
+      offsetX: Math.round(ox),
+      offsetY: Math.round(oy)
+    };
+  }
+
+  _collectSnapTargets(activeId) {
+    const sw = this._screenW;
+    const sh = this._screenH;
+    const safeX = Math.round(sw * 0.05);
+    const safeY = Math.round(sh * 0.05);
+
+    const xTargets = [
+      { pos: 0, label: 'Canvas Left', priority: 2 },
+      { pos: Math.round(sw / 2), label: 'Center X', priority: 1 },
+      { pos: sw, label: 'Canvas Right', priority: 2 },
+      { pos: safeX, label: 'Safe Area', priority: 3 },
+      { pos: sw - safeX, label: 'Safe Area', priority: 3 }
+    ];
+
+    const yTargets = [
+      { pos: 0, label: 'Canvas Top', priority: 2 },
+      { pos: Math.round(sh / 2), label: 'Center Y', priority: 1 },
+      { pos: sh, label: 'Canvas Bottom', priority: 2 },
+      { pos: safeY, label: 'Safe Area', priority: 3 },
+      { pos: sh - safeY, label: 'Safe Area', priority: 3 }
+    ];
+
+    const otherBounds = [];
+    const baseUI = this.uiManager.baseUI;
+
+    if (baseUI.crosshair && baseUI.crosshair.active !== false && activeId !== 'base:crosshair') {
+      const sz = this._getElementSize('base:crosshair', baseUI.crosshair);
+      otherBounds.push({
+        id: 'base:crosshair',
+        name: 'Crosshair',
+        ...this._getBoundsFromOffset(baseUI.crosshair.anchor || 'middle-center', baseUI.crosshair.offsetX || 0, baseUI.crosshair.offsetY || 0, sz.width, sz.height)
+      });
+    }
+
+    if (baseUI.prompt && baseUI.prompt.active !== false && activeId !== 'base:prompt') {
+      const sz = this._getElementSize('base:prompt', baseUI.prompt);
+      otherBounds.push({
+        id: 'base:prompt',
+        name: 'Prompt',
+        ...this._getBoundsFromOffset(baseUI.prompt.anchor || 'bottom-center', baseUI.prompt.offsetX || 0, baseUI.prompt.offsetY || 60, sz.width, sz.height)
+      });
+    }
+
+    if (baseUI.joystick && baseUI.joystick.active !== false && activeId !== 'base:joystick') {
+      const sz = this._getElementSize('base:joystick', baseUI.joystick);
+      otherBounds.push({
+        id: 'base:joystick',
+        name: 'Joystick',
+        ...this._getBoundsFromOffset(baseUI.joystick.anchor || 'bottom-left', baseUI.joystick.offsetX || 40, baseUI.joystick.offsetY || 40, sz.width, sz.height)
+      });
+    }
+
+    const allElements = this.uiManager.getAllElements();
+    for (const el of allElements) {
+      if (el.id === activeId || el.visible === false) continue;
+      const sz = this._getElementSize(el.id, el);
+      otherBounds.push({
+        id: el.id,
+        name: el.name || 'Element',
+        ...this._getBoundsFromOffset(el.anchor || 'top-left', el.offsetX || 0, el.offsetY || 0, sz.width, sz.height)
+      });
+    }
+
+    for (const b of otherBounds) {
+      xTargets.push(
+        { pos: Math.round(b.left), label: `${b.name} Left`, priority: 2 },
+        { pos: Math.round(b.centerX), label: `${b.name} Center`, priority: 1 },
+        { pos: Math.round(b.right), label: `${b.name} Right`, priority: 2 }
+      );
+
+      yTargets.push(
+        { pos: Math.round(b.top), label: `${b.name} Top`, priority: 2 },
+        { pos: Math.round(b.centerY), label: `${b.name} Middle`, priority: 1 },
+        { pos: Math.round(b.bottom), label: `${b.name} Bottom`, priority: 2 }
+      );
+    }
+
+    if (otherBounds.length >= 2) {
+      for (let i = 0; i < otherBounds.length; i++) {
+        for (let j = i + 1; j < otherBounds.length; j++) {
+          const b1 = otherBounds[i];
+          const b2 = otherBounds[j];
+          const midX = Math.round((b1.centerX + b2.centerX) / 2);
+          const midY = Math.round((b1.centerY + b2.centerY) / 2);
+          xTargets.push({ pos: midX, label: `Midpoint (${b1.name} & ${b2.name})`, priority: 2 });
+          yTargets.push({ pos: midY, label: `Midpoint (${b1.name} & ${b2.name})`, priority: 2 });
+        }
+      }
+    }
+
+    return { xTargets, yTargets, otherBounds };
+  }
+
+  _snapElement(activeId, rawLeft, rawTop, width, height) {
+    const { xTargets, yTargets } = this._collectSnapTargets(activeId);
+    const threshold = 8;
+
+    let bestDeltaX = 0;
+    let minDiffX = Infinity;
+    let activeGuideX = null;
+
+    const testXPoints = [
+      { pos: rawLeft, type: 'left' },
+      { pos: rawLeft + width / 2, type: 'center' },
+      { pos: rawLeft + width, type: 'right' }
+    ];
+
+    for (const pt of testXPoints) {
+      for (const t of xTargets) {
+        const diff = t.pos - pt.pos;
+        const absDiff = Math.abs(diff);
+        if (absDiff <= threshold) {
+          if (absDiff < minDiffX || (absDiff === minDiffX && t.priority < (activeGuideX ? activeGuideX.priority : 99))) {
+            minDiffX = absDiff;
+            bestDeltaX = diff;
+            activeGuideX = {
+              type: 'v',
+              pos: t.pos,
+              label: t.label,
+              priority: t.priority,
+              badgeY: Math.max(20, Math.min(this._screenH - 20, rawTop + height / 2))
+            };
+          }
+        }
+      }
+    }
+
+    let bestDeltaY = 0;
+    let minDiffY = Infinity;
+    let activeGuideY = null;
+
+    const testYPoints = [
+      { pos: rawTop, type: 'top' },
+      { pos: rawTop + height / 2, type: 'center' },
+      { pos: rawTop + height, type: 'bottom' }
+    ];
+
+    for (const pt of testYPoints) {
+      for (const t of yTargets) {
+        const diff = t.pos - pt.pos;
+        const absDiff = Math.abs(diff);
+        if (absDiff <= threshold) {
+          if (absDiff < minDiffY || (absDiff === minDiffY && t.priority < (activeGuideY ? activeGuideY.priority : 99))) {
+            minDiffY = absDiff;
+            bestDeltaY = diff;
+            activeGuideY = {
+              type: 'h',
+              pos: t.pos,
+              label: t.label,
+              priority: t.priority,
+              badgeX: Math.max(30, Math.min(this._screenW - 30, rawLeft + width / 2))
+            };
+          }
+        }
+      }
+    }
+
+    const guides = [];
+    if (activeGuideX) guides.push(activeGuideX);
+    if (activeGuideY) guides.push(activeGuideY);
+
+    return {
+      left: rawLeft + bestDeltaX,
+      top: rawTop + bestDeltaY,
+      guides
+    };
+  }
+
+  _renderSnapGuides(guides) {
+    if (!this.previewScreen) return;
+    let overlay = this.previewScreen.querySelector('.ui-snap-guides-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'ui-snap-guides-overlay';
+      this.previewScreen.appendChild(overlay);
+    }
+    overlay.innerHTML = '';
+    if (!guides || guides.length === 0) return;
+
+    for (const g of guides) {
+      if (g.type === 'v') {
+        const line = document.createElement('div');
+        line.className = 'ui-snap-line-v';
+        line.style.left = `${g.pos}px`;
+        overlay.appendChild(line);
+
+        if (g.label) {
+          const badge = document.createElement('div');
+          badge.className = 'ui-snap-badge';
+          badge.textContent = g.label;
+          badge.style.left = `${g.pos}px`;
+          badge.style.top = `${g.badgeY ?? 24}px`;
+          overlay.appendChild(badge);
+        }
+      } else if (g.type === 'h') {
+        const line = document.createElement('div');
+        line.className = 'ui-snap-line-h';
+        line.style.top = `${g.pos}px`;
+        overlay.appendChild(line);
+
+        if (g.label) {
+          const badge = document.createElement('div');
+          badge.className = 'ui-snap-badge';
+          badge.textContent = g.label;
+          badge.style.top = `${g.pos}px`;
+          badge.style.left = `${g.badgeX ?? 36}px`;
+          overlay.appendChild(badge);
+        }
+      }
+    }
+  }
+
+  _clearSnapGuides() {
+    if (!this.previewScreen) return;
+    const overlay = this.previewScreen.querySelector('.ui-snap-guides-overlay');
+    if (overlay) overlay.innerHTML = '';
   }
 
   _showTooltip(text) {
@@ -1085,6 +1575,7 @@ export class UIPanel {
       visBtn.title = el.visible !== false ? 'Hide Element' : 'Show Element';
       visBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        this._pushUndo();
         this.uiManager.updateElement(el.id, { visible: !(el.visible !== false) });
         this._renderList();
         this._renderPreview();
@@ -1097,6 +1588,7 @@ export class UIPanel {
       lockBtn.title = el.locked ? 'Unlock Dragging' : 'Lock on Canvas';
       lockBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        this._pushUndo();
         this.uiManager.updateElement(el.id, { locked: !el.locked });
         this._renderList();
         this._renderPreview();
@@ -1109,6 +1601,7 @@ export class UIPanel {
       upBtn.title = 'Move Layer Up';
       upBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        this._pushUndo();
         this.uiManager.moveElementUp(el.id);
         this._renderList();
         this._renderPreview();
@@ -1121,6 +1614,7 @@ export class UIPanel {
       downBtn.title = 'Move Layer Down';
       downBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        this._pushUndo();
         this.uiManager.moveElementDown(el.id);
         this._renderList();
         this._renderPreview();
@@ -1133,6 +1627,7 @@ export class UIPanel {
       delBtn.title = 'Delete Element';
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        this._pushUndo();
         this.uiManager.removeElement(el.id);
         if (this._selectedElementId === el.id) {
           this._selectedElementId = 'base:crosshair';
@@ -1464,6 +1959,7 @@ export class UIPanel {
       btn.textContent = symbol;
       btn.title = anchor;
       btn.addEventListener('click', () => {
+        this._pushUndo();
         if (onChange) {
           onChange(anchor);
         } else if (el.id) {
@@ -1496,7 +1992,21 @@ export class UIPanel {
       if (min !== -Infinity) input.min = String(min);
       if (max !== Infinity) input.max = String(max);
     }
+    let origVal = val;
+    input.addEventListener('focus', () => {
+      origVal = input.value;
+      this._inputPreEditSnapshot = this._createSnapshot();
+    });
     input.addEventListener('input', () => onChange(input.value));
+    input.addEventListener('change', () => {
+      if (input.value !== origVal) {
+        if (this._inputPreEditSnapshot) {
+          this._pushUndo(this._inputPreEditSnapshot);
+          this._inputPreEditSnapshot = null;
+        }
+        origVal = input.value;
+      }
+    });
     row.appendChild(input);
     targetContainer.appendChild(row);
   }
@@ -1514,7 +2024,10 @@ export class UIPanel {
     cb.checked = checked;
     cb.style.accentColor = 'var(--accent)';
     cb.style.cursor = 'pointer';
-    cb.addEventListener('change', () => onChange(cb.checked));
+    cb.addEventListener('change', () => {
+      this._pushUndo();
+      onChange(cb.checked);
+    });
     row.appendChild(cb);
     targetContainer.appendChild(row);
   }
@@ -1540,9 +2053,28 @@ export class UIPanel {
     textIn.className = 'props-color-text';
     textIn.value = val;
 
+    let origColor = val;
+    const onFocusColor = () => {
+      origColor = textIn.value;
+      this._inputPreEditSnapshot = this._createSnapshot();
+    };
+
+    input.addEventListener('focus', onFocusColor);
+    textIn.addEventListener('focus', onFocusColor);
+
     input.addEventListener('input', () => {
       textIn.value = input.value;
       onChange(input.value);
+    });
+
+    input.addEventListener('change', () => {
+      if (input.value !== origColor) {
+        if (this._inputPreEditSnapshot) {
+          this._pushUndo(this._inputPreEditSnapshot);
+          this._inputPreEditSnapshot = null;
+        }
+        origColor = input.value;
+      }
     });
 
     textIn.addEventListener('input', () => {
@@ -1550,6 +2082,16 @@ export class UIPanel {
         input.value = textIn.value;
       }
       onChange(textIn.value);
+    });
+
+    textIn.addEventListener('change', () => {
+      if (textIn.value !== origColor) {
+        if (this._inputPreEditSnapshot) {
+          this._pushUndo(this._inputPreEditSnapshot);
+          this._inputPreEditSnapshot = null;
+        }
+        origColor = textIn.value;
+      }
     });
 
     wrap.appendChild(input);
@@ -1575,7 +2117,10 @@ export class UIPanel {
       if (opt === current) o.selected = true;
       select.appendChild(o);
     });
-    select.addEventListener('change', () => onChange(select.value));
+    select.addEventListener('change', () => {
+      this._pushUndo();
+      onChange(select.value);
+    });
     row.appendChild(select);
     targetContainer.appendChild(row);
   }
@@ -1598,7 +2143,6 @@ export class UIPanel {
     const xIn = document.createElement('input');
     xIn.type = 'number';
     xIn.value = xVal;
-    xIn.addEventListener('input', () => onChange(parseFloat(xIn.value) || 0, parseFloat(yIn.value) || 0));
     xField.appendChild(xTag);
     xField.appendChild(xIn);
 
@@ -1609,9 +2153,38 @@ export class UIPanel {
     const yIn = document.createElement('input');
     yIn.type = 'number';
     yIn.value = yVal;
-    yIn.addEventListener('input', () => onChange(parseFloat(xIn.value) || 0, parseFloat(yIn.value) || 0));
     yField.appendChild(yTag);
     yField.appendChild(yIn);
+
+    let origX = xVal;
+    let origY = yVal;
+    const onFocusVec = () => {
+      origX = parseFloat(xIn.value) || 0;
+      origY = parseFloat(yIn.value) || 0;
+      this._inputPreEditSnapshot = this._createSnapshot();
+    };
+
+    xIn.addEventListener('focus', onFocusVec);
+    yIn.addEventListener('focus', onFocusVec);
+
+    xIn.addEventListener('input', () => onChange(parseFloat(xIn.value) || 0, parseFloat(yIn.value) || 0));
+    yIn.addEventListener('input', () => onChange(parseFloat(xIn.value) || 0, parseFloat(yIn.value) || 0));
+
+    const onCommitVec = () => {
+      const curX = parseFloat(xIn.value) || 0;
+      const curY = parseFloat(yIn.value) || 0;
+      if (curX !== origX || curY !== origY) {
+        if (this._inputPreEditSnapshot) {
+          this._pushUndo(this._inputPreEditSnapshot);
+          this._inputPreEditSnapshot = null;
+        }
+        origX = curX;
+        origY = curY;
+      }
+    };
+
+    xIn.addEventListener('change', onCommitVec);
+    yIn.addEventListener('change', onCommitVec);
 
     wrap.appendChild(xField);
     wrap.appendChild(yField);
@@ -1646,6 +2219,7 @@ export class UIPanel {
     }
 
     select.addEventListener('change', () => {
+      this._pushUndo();
       this.uiManager.updateElement(el.id, { textureAssetId: select.value });
       this._renderProps();
       this._renderPreview();
@@ -1653,6 +2227,41 @@ export class UIPanel {
 
     row.appendChild(select);
     targetContainer.appendChild(row);
+  }
+
+  _createSnapshot() {
+    return {
+      uiState: this.uiManager.serialize(),
+      selectedElementId: this._selectedElementId
+    };
+  }
+
+  _pushUndo(snapshot = null) {
+    const snap = snapshot || this._createSnapshot();
+    this._undoStack.push(snap);
+    if (this._undoStack.length > this._maxHistory) {
+      this._undoStack.shift();
+    }
+    this._redoStack = [];
+    this._updateUndoRedoButtons();
+  }
+
+  _applySnapshot(snap) {
+    if (!snap) return;
+    this.uiManager.deserialize(snap.uiState);
+    this._selectedElementId = snap.selectedElementId;
+    this._renderList();
+    this._renderProps();
+    this._renderPreview();
+  }
+
+  _updateUndoRedoButtons() {
+    if (this._undoBtn) {
+      this._undoBtn.disabled = !this.canUndo();
+    }
+    if (this._redoBtn) {
+      this._redoBtn.disabled = !this.canRedo();
+    }
   }
   //#endregion
 }
