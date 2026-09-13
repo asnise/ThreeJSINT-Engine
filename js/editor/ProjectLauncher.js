@@ -83,7 +83,7 @@ export class ProjectLauncher {
       { id: 'projects', label: 'Projects' },
       { id: 'new', label: 'New Project' },
       { id: 'open', label: 'Open' },
-      { id: 'demos', label: 'Samples' }
+      { id: 'demos', label: 'Templates' }
     ];
 
     this._tabBtns = new Map();
@@ -107,7 +107,7 @@ export class ProjectLauncher {
     this._container.appendChild(this._modalEl);
   }
 
-  _switchTab(tabId) {
+  async _switchTab(tabId) {
     this._activeTab = tabId;
     for (const [id, btn] of this._tabBtns.entries()) {
       btn.classList.toggle('active', id === tabId);
@@ -116,18 +116,43 @@ export class ProjectLauncher {
     this._contentEl.innerHTML = '';
     switch (tabId) {
       case 'projects':
-        this._renderProjectsTab();
+        await this._renderProjectsTab();
         break;
       case 'new':
-        this._renderNewTab();
+        await this._renderNewTab();
         break;
       case 'open':
         this._renderOpenTab();
         break;
       case 'demos':
-        this._renderDemosTab();
+        await this._renderDemosTab();
         break;
     }
+  }
+
+  async _fetchAvailableTemplates() {
+    try {
+      const resp = await fetch('demo/manifest.json', { cache: 'no-cache' });
+      if (resp.ok) {
+        const list = await resp.json();
+        if (Array.isArray(list)) {
+          return list.map(item => {
+            if (typeof item === 'string') {
+              const name = item.replace(/\.threeint$/i, '').replace(/[_-]+/g, ' ');
+              return { file: item, title: name, desc: `Project package template (${item})` };
+            }
+            return {
+              file: item.file || item.filename,
+              title: item.title || item.name || (item.file || '').replace(/\.threeint$/i, ''),
+              desc: item.desc || item.description || `Project package template (${item.file || ''})`
+            };
+          }).filter(item => item.file && item.file.toLowerCase().endsWith('.threeint'));
+        }
+      }
+    } catch {
+      // Manifest not found or fetch failure
+    }
+    return [];
   }
 
   async _renderProjectsTab() {
@@ -222,7 +247,7 @@ export class ProjectLauncher {
     this._contentEl.appendChild(wrap);
   }
 
-  _renderNewTab() {
+  async _renderNewTab() {
     this._contentEl.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'launcher-tab-panel';
@@ -255,10 +280,20 @@ export class ProjectLauncher {
     const tplRow = document.createElement('div');
     tplRow.className = 'launcher-template-row';
 
+    const demoTemplates = await this._fetchAvailableTemplates();
     const tpls = [
       { id: 'blank', title: 'Blank Scene', desc: 'Empty canvas with floor and ambient lighting' },
-      { id: 'demo', title: 'Treasure Room Demo', desc: 'Preconfigured interactive room with key, chest, and lights' }
+      ...demoTemplates.map(d => ({
+        id: `demo_${d.file}`,
+        title: d.title,
+        desc: d.desc,
+        file: d.file
+      }))
     ];
+
+    if (!tpls.some(t => t.id === this._selectedTemplate)) {
+      this._selectedTemplate = 'blank';
+    }
 
     tpls.forEach(t => {
       const card = document.createElement('div');
@@ -285,12 +320,13 @@ export class ProjectLauncher {
       const pName = nameInput.value.trim() || 'MyInteractiveScene';
       try {
         let initialData = null;
-        if (this._selectedTemplate === 'demo') {
-          try {
-            const resp = await fetch('demo/treasure-room.json');
-            initialData = await resp.json();
-          } catch {
-            initialData = null;
+        if (this._selectedTemplate && this._selectedTemplate !== 'blank') {
+          const matched = tpls.find(t => t.id === this._selectedTemplate);
+          if (matched && matched.file) {
+            const resp = await fetch(`demo/${matched.file}`);
+            if (!resp.ok) throw new Error(`Could not load template file: demo/${matched.file}`);
+            const blob = await resp.blob();
+            initialData = await this._projectFS.parseProjectPackage(blob);
           }
         }
 
@@ -355,7 +391,7 @@ export class ProjectLauncher {
     this._contentEl.appendChild(wrap);
   }
 
-  _renderDemosTab() {
+  async _renderDemosTab() {
     this._contentEl.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'launcher-tab-panel';
@@ -363,50 +399,60 @@ export class ProjectLauncher {
     const header = document.createElement('div');
     header.className = 'launcher-panel-header';
     header.innerHTML = `
-      <h3>Samples & Templates</h3>
-      <span class="launcher-panel-desc">Explore prebuilt interactive 3D scenes</span>
+      <h3>Templates & Samples</h3>
+      <span class="launcher-panel-desc">Prebuilt .threeint project packages located in the demo/ folder</span>
     `;
     wrap.appendChild(header);
 
-    const demosGrid = document.createElement('div');
-    demosGrid.className = 'launcher-demos-grid';
-
-    const demoItems = [
-      {
-        id: 'treasure-room',
-        title: 'Treasure Room',
-        desc: 'Interactive 3D puzzle with keys, locked chests, dynamic point lights, inspectable artifacts, and condition logic.',
-        badge: 'Interactive Puzzle'
-      },
-      {
-        id: 'sandbox',
-        title: 'Quick Sandbox',
-        desc: 'Start immediately in a clean 3D scene without saving to a folder yet.',
-        badge: 'Scratchpad'
-      }
-    ];
-
-    demoItems.forEach(d => {
-      const card = document.createElement('div');
-      card.className = 'launcher-demo-card';
-      card.innerHTML = `
-        <div class="demo-card-badge">${d.badge}</div>
-        <div class="demo-card-title">${d.title}</div>
-        <div class="demo-card-desc">${d.desc}</div>
-        <button class="launcher-primary-btn demo-launch-btn">Launch Scene</button>
+    const demoItems = await this._fetchAvailableTemplates();
+    if (demoItems.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'launcher-empty-state';
+      empty.innerHTML = `
+        <p>No .threeint template packages found in demo/</p>
+        <span class="launcher-panel-desc" style="margin-bottom: 16px; display: block;">
+          Save or place any .threeint project package into the <code>demo/</code> directory to use it as a template.
+        </span>
+        <button class="launcher-primary-btn" id="go-blank-btn">Create Blank Scene</button>
       `;
-      card.querySelector('.demo-launch-btn').addEventListener('click', () => {
-        this.hide();
-        if (d.id === 'sandbox') {
-          if (this._callbacks.onQuickSandbox) this._callbacks.onQuickSandbox();
-        } else {
-          if (this._callbacks.onLoadDemo) this._callbacks.onLoadDemo(d.id);
-        }
+      empty.querySelector('#go-blank-btn').addEventListener('click', () => {
+        this._selectedTemplate = 'blank';
+        this._switchTab('new');
       });
-      demosGrid.appendChild(card);
-    });
+      wrap.appendChild(empty);
+    } else {
+      const demosGrid = document.createElement('div');
+      demosGrid.className = 'launcher-demos-grid';
 
-    wrap.appendChild(demosGrid);
+      demoItems.forEach(d => {
+        const card = document.createElement('div');
+        card.className = 'launcher-demo-card';
+        card.innerHTML = `
+          <div class="demo-card-badge">.threeint</div>
+          <div class="demo-card-title">${d.title}</div>
+          <div class="demo-card-desc">${d.desc}</div>
+          <button class="launcher-primary-btn demo-launch-btn">Use Template</button>
+        `;
+        card.querySelector('.demo-launch-btn').addEventListener('click', async () => {
+          try {
+            const resp = await fetch(`demo/${d.file}`);
+            if (!resp.ok) throw new Error(`Could not load template file: demo/${d.file}`);
+            const blob = await resp.blob();
+            const data = await this._projectFS.parseProjectPackage(blob);
+            this.hide();
+            if (this._callbacks.onProjectLoaded) {
+              this._callbacks.onProjectLoaded(data);
+            }
+          } catch (err) {
+            alert(`Could not launch template: ${err.message}`);
+          }
+        });
+        demosGrid.appendChild(card);
+      });
+
+      wrap.appendChild(demosGrid);
+    }
+
     this._contentEl.appendChild(wrap);
   }
   //#endregion

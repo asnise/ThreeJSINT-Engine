@@ -55,9 +55,9 @@ php -S localhost:8080
 
 Open `http://localhost:8080` in any modern browser (Chrome, Edge, Firefox, Safari).
 
-To bypass the launcher and open the included Treasure Room demo scene directly:
+To bypass the launcher and open a specific template package from the demo folder directly:
 ```
-http://localhost:8080/?demo=treasure-room
+http://localhost:8080/?demo=MyTemplate
 ```
 
 ---
@@ -67,7 +67,7 @@ http://localhost:8080/?demo=treasure-room
 ### 1. Project Management & Storage
 - **Browser Drive (IndexedDB)**: `Ctrl + S` instantly persists your complete project state (scene hierarchy, materials, virtual folders, asset binaries, node graphs, and custom UI) directly into browser storage without prompting file downloads.
 - **Portable Packages (`.threeint`)**: `Ctrl + Shift + S` packages the entire project into a compressed ZIP containing an `index.json` manifest and raw asset binaries. Share or transfer projects across devices effortlessly.
-- **Project Launcher**: Create projects from starter presets (Empty Scene, First-Person Starter, Treasure Room Demo), rename projects inline, clone existing scenes, or load local archive files.
+- **Project Launcher**: Create projects from Blank Scene or custom `.threeint` templates stored in `demo/`, rename projects inline, clone existing scenes, or load local archive files.
 
 ### 2. Project Panel & Virtual File System
 - **Folder Organization**: Create, rename, and nest custom directories inside the Project Panel.
@@ -216,9 +216,10 @@ ThreeJSINT/
 │       ├── runtime-controllers.js # Player controller and 3D item inspection
 │       └── runtime-loop.js        # Game loop and input listeners
 ├── scripts/
-│   └── build-export.js            # Automated compiler for ExportTemplate.generated.js
+│   ├── build-export.js            # Automated compiler for ExportTemplate.generated.js
+│   └── build-templates.js         # Automated discovery tool for demo/*.threeint templates
 ├── demo/
-│   └── treasure-room.json         # Included sample scene
+│   └── manifest.json              # Auto-generated template registry for demo packages
 └── screenshots/
     ├── editor_overview.png        # Viewport and editor layout preview
     ├── demo_runtime.webp          # Animated gameplay preview

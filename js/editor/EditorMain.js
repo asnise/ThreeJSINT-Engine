@@ -217,12 +217,8 @@ export class EditorMain {
       },
       onLoadDemo: (name) => {
         this.loadDemo(name);
-        this._setProjectName(`Demo: ${name}`);
       },
-      onQuickSandbox: (name, template) => {
-        if (template === 'demo') {
-          this.loadDemo('treasure-room');
-        }
+      onQuickSandbox: () => {
         this._setProjectName('Quick Sandbox');
       }
     });
@@ -623,15 +619,22 @@ export class EditorMain {
     this.toolbar.setPlayEnabled(hasCameraOrPlayer);
   }
 
-  async loadDemo(name) {
+  async loadDemo(nameOrFile) {
+    if (!nameOrFile) return;
     try {
-      const resp = await fetch(`demo/${name}.json`);
-      const data = await resp.json();
+      const filename = nameOrFile.endsWith('.threeint') ? nameOrFile : `${nameOrFile}.threeint`;
+      const resp = await fetch(`demo/${filename}`);
+      if (!resp.ok) {
+        throw new Error(`Template not found: demo/${filename}`);
+      }
+      const blob = await resp.blob();
+      const data = await this.projectFS.parseProjectPackage(blob);
       await this._loadProjectData(data);
-      this._setProjectName(`Demo: ${name}`);
-      this._showToast(`Demo loaded: ${name}`);
+      this._setProjectName(`Template: ${data.projectName || filename}`);
+      this._showToast(`Template loaded: ${data.projectName || filename}`);
     } catch (err) {
-      console.warn('Could not load demo:', err);
+      console.warn('Could not load template package:', err);
+      this._showToast(`Could not load template: ${nameOrFile}`);
     }
   }
 
